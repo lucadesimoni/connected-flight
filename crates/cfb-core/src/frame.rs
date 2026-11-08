@@ -177,7 +177,7 @@ pub fn encode_ack(seqs: &[u16]) -> Vec<u8> {
 }
 
 pub fn decode_ack(payload: &[u8]) -> Vec<u16> {
-    payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+    payload.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()
 }
 
 /// Sequence number of an encoded frame without a full decode.

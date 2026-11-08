@@ -1,0 +1,7 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+# Pinned toolchain: every build (local, CI, Pi) uses the same compiler and
+# lints. Change deliberately, as a reviewed commit.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
