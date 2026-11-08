@@ -66,6 +66,7 @@ installed as a **minor change** with **DAL D field-loadable software**.
 | [08 Avionics data access](docs/08-avionics-data-access.md) | Honeywell Apex/Epic maintenance port, ACMS/CMC, ARINC 429/717, QARs, Garmin logs, legal limits, competitors |
 | [09 Ownership & commercialisation](docs/09-ownership-and-commercialisation.md) | IP protection, employment check, trademarks, business models, company setup |
 | [10 Bench & portable test](docs/10-bench-and-portable-test.md) | Pi 5 + Wi-Fi + 4G + WireGuard setup, 16 tests, rules for carrying it as a portable device |
+| [11 Hardware components](docs/11-hardware-components.md) | Parts for the portable unit and the integrated (certifiable) unit, power, cost, sequence |
 
 ## Repository layout
 
