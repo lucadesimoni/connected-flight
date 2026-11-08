@@ -32,6 +32,75 @@ pub struct Config {
     pub queue: QueueConfig,
     pub reporting: Reporting,
     pub update: UpdateConfig,
+    #[serde(default)]
+    pub edge: EdgeConfig,
+    #[serde(default)]
+    pub ota: OtaConfig,
+    /// Ground transport over IP bearers. Absent = links driven by cfb-io
+    /// status only (no transport in this process).
+    #[serde(default)]
+    pub transport: Option<TransportConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EdgeConfig {
+    /// Signed ASCI listing the approved app packages (`<asci>.sig` beside it).
+    #[serde(default)]
+    pub asci: Option<String>,
+    /// Directories with `<app>.toml` + `<app>.toml.sig`.
+    #[serde(default)]
+    pub app_dirs: Vec<String>,
+    #[serde(default)]
+    pub limits: crate::edge::Limits,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OtaConfig {
+    pub enabled: bool,
+    /// Package location: `<base_url>/{asci.toml,manifest.toml,bundle.raucb}` + `.sig`.
+    pub base_url: String,
+    pub download_dir: String,
+    /// In-flight links allowed for *downloading* (never installing), e.g.
+    /// ["leo_sat"]. Empty = download on ground only.
+    #[serde(default)]
+    pub inflight_download_links: Vec<LinkKind>,
+    pub retry_s: f64,
+}
+
+impl Default for OtaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: String::new(),
+            download_dir: "/data/updates".into(),
+            inflight_download_links: vec![],
+            retry_s: 300.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransportConfig {
+    /// Ground service address inside the tunnels, e.g. "10.66.0.1:7400".
+    pub ground: String,
+    /// Resend an unacked message after this many seconds.
+    pub retry_s: u64,
+    pub bearers: BTreeMap<LinkKind, BearerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BearerConfig {
+    /// Local tunnel address for this bearer, e.g. "10.66.4.2:0". Policy
+    /// routing by source address sends the traffic over the right bearer.
+    pub local: String,
+    /// Tunnel interface, checked for operstate (e.g. "wg-leo").
+    #[serde(default)]
+    pub iface: Option<String>,
+    pub nominal_bps: u32,
+    /// Keepalive interval when idle; 0 = none (metered links).
+    pub keepalive_s: u64,
+    /// Link counts as down after no reply for this long.
+    pub down_after_s: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +187,20 @@ impl Config {
         }
         self.trusted_verifying_keys()?;
         self.validate_modules()?;
+        if let Some(tr) = &self.transport {
+            tr.ground.parse::<std::net::SocketAddr>().map_err(|_| ConfigError("transport.ground must be ip:port".into()))?;
+            for (k, b) in &tr.bearers {
+                if !self.modules.has_link(*k) {
+                    return Err(ConfigError(format!("transport bearer {k:?} without its module")));
+                }
+                b.local.parse::<std::net::SocketAddr>().map_err(|_| ConfigError(format!("bearer {k:?}: bad local address")))?;
+            }
+        }
+        for k in &self.ota.inflight_download_links {
+            if matches!(self.links.get(k), Some(p) if p.ground_only) {
+                return Err(ConfigError(format!("ota: {k:?} is ground-only, cannot be an in-flight download link")));
+            }
+        }
         if self.reporting.position_interval_air_s == 0 {
             return Err(ConfigError("position_interval_air_s must be > 0".into()));
         }
@@ -175,6 +258,30 @@ mod tests {
 
     const EXAMPLE: &str = include_str!("../../../config/cfb.toml");
     const MINIMAL: &str = include_str!("../../../config/cfb-minimal.toml");
+    const PC12: &str = include_str!("../../../config/cfb-pc12-example.toml");
+
+    #[test]
+    fn pc12_example_parses_with_transport_ota_and_edge() {
+        let c = Config::from_toml(PC12).unwrap();
+        let tr = c.transport.as_ref().unwrap();
+        assert_eq!(tr.bearers.len(), 4);
+        assert!(c.ota.enabled && c.ota.inflight_download_links == vec![LinkKind::LeoSat]);
+        assert_eq!(c.edge.app_dirs.len(), 2);
+    }
+
+    #[test]
+    fn inflight_download_over_cellular_rejected() {
+        let bad = PC12.replace("inflight_download_links = [\"leo_sat\"]", "inflight_download_links = [\"cellular\"]");
+        assert_ne!(bad, PC12);
+        assert!(Config::from_toml(&bad).unwrap_err().0.contains("ground-only"));
+    }
+
+    #[test]
+    fn example_app_package_parses() {
+        let p = crate::edge::AppPackage::parse(include_bytes!("../../../config/apps/turboprop-ops.toml")).unwrap();
+        assert_eq!(p.exceedance.len(), 4);
+        assert_eq!(p.trend.len(), 1);
+    }
 
     #[test]
     fn minimal_config_parses() {

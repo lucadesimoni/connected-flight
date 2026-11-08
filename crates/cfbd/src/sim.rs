@@ -2,12 +2,16 @@
 //! `cfb-io` would: ARINC 429 words, NMEA sentences, accelerometer samples,
 //! discretes and link state.
 //!
-//! Script: parked, engine start, taxi, takeoff, climb, cruise with an
-//! ARINC outage (t = 900–1000 s) and a turbulence encounter (t = 1200 s),
-//! descent, landing, taxi in, shutdown, maintenance mode.
+//! Script: parked, engine start, taxi, takeoff, climb, cruise with an ITT
+//! excursion (t = 600–612 s), an OTA announcement (t = 700 s), an ARINC
+//! outage (t = 900–1000 s) and a turbulence encounter (t = 1200 s), descent,
+//! landing, taxi in, shutdown, maintenance mode.
+//!
+//! ARINC words are generated for whatever labels the config defines, from
+//! the parameter name, so the simulator follows the installed label table.
 
 use crate::input::{Inputs, Sample};
-use cfb_core::arinc429::{Ssm, Word};
+use cfb_core::arinc429::{Format, LabelDef, Ssm, Word};
 use cfb_core::gnss::make_rmc_gga;
 use cfb_core::{LinkKind, LinkStatus};
 use std::collections::BTreeMap;
@@ -16,8 +20,21 @@ pub struct SimInputs {
     pub t: u32,
     pub hard_landing: bool,
     pub hw: Vec<String>,
-    pub has_arinc: bool,
+    /// Labels to generate (empty = no ARINC module).
+    pub labels: Vec<LabelDef>,
     pub seed: u32,
+}
+
+/// Engine values for the script: (torque %, ITT °C, Ng %, fuel flow kg/h).
+fn engine_params(t: u32) -> (f64, f64, f64, f64) {
+    match t {
+        0..=59 | 1801.. => (0.0, 20.0, 0.0, 0.0),
+        180..=399 => (100.0, 760.0, 101.0, 320.0),
+        600..=612 => (86.0, 812.0, 97.5, 265.0),
+        400..=1499 => (85.0, 720.0, 97.0, 260.0),
+        1500..=1703 => (35.0, 600.0, 85.0, 150.0),
+        _ => (5.0, 550.0, 65.0, 70.0),
+    }
 }
 
 impl SimInputs {
@@ -59,16 +76,29 @@ impl Inputs for SimInputs {
         let (lat, lon) = (47.0 + d * 0.0005, 8.3 + d * 0.0003);
         let trk = 31.0;
 
-        // ARINC 429: aircraft GNSS on bus 0, air data on bus 1.
+        // ARINC 429, for every configured BNR label the script knows.
+        let (tq, itt, ng, ff) = engine_params(t);
         let mut a429 = Vec::new();
-        if self.has_arinc && !(900..=1000).contains(&t) {
-            let bnr = |l, v, r, b| Word::encode_bnr(l, 0, v, r, b, Ssm::Normal).0;
-            a429.push((0, bnr(0o310, lat, 180.0, 20)));
-            a429.push((0, bnr(0o311, lon, 180.0, 20)));
-            a429.push((0, bnr(0o312, gs as f64, 4096.0, 15)));
-            a429.push((0, bnr(0o313, trk, 180.0, 15)));
-            a429.push((1, bnr(0o203, alt, 131_072.0, 17)));
-            a429.push((1, bnr(0o212, vs, 32_768.0, 11)));
+        if !(900..=1000).contains(&t) {
+            for l in self.labels.iter().filter(|l| l.format == Format::Bnr) {
+                let v = match l.param.as_str() {
+                    "latitude" => lat,
+                    "longitude" => lon,
+                    "ground_speed" => gs as f64,
+                    "track" => trk,
+                    "pressure_altitude" => alt,
+                    "altitude_rate" => vs,
+                    "torque" => tq,
+                    "itt" => itt,
+                    "ng" => ng,
+                    "fuel_flow" => ff,
+                    "oat" => 15.0 - 2.0 * alt / 1000.0,
+                    _ => continue,
+                };
+                let Ok(num) = u16::from_str_radix(&l.label, 8) else { continue };
+                let w = Word::encode_bnr(num, l.sdi.unwrap_or(0), v, l.range, l.sig_bits, Ssm::Normal);
+                a429.push((l.channel.unwrap_or(0), w.0));
+            }
         }
 
         // Own GNSS: ~10 m from the aircraft source, geometric altitude.
@@ -110,6 +140,7 @@ impl Inputs for SimInputs {
         put(LinkKind::Wifi, at_base, 50_000_000);
         put(LinkKind::Cellular, !AIRBORNE.contains(&t), 20_000_000);
         put(LinkKind::Iridium, true, 22_000);
+        put(LinkKind::LeoSat, true, 50_000_000); // only used if fitted and enabled
 
         Some(Sample {
             t: t as f64,

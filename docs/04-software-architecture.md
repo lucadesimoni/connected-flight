@@ -11,7 +11,9 @@
 | Supervision | systemd, `WatchdogSec`, external HW watchdog | Restart on hang, reset on deadlock |
 | Application | Rust, `#![forbid(unsafe_code)]`, no async runtime | Memory safety, deterministic 1 Hz loop, ~600 KB binary |
 | I/O adapters | `cfb-io` (separate service): gpsd, libgpiod, ModemManager, iwd, Certus AT driver | Keeps drivers out of the decision logic; writes one input line/s |
-| Ground link security | WireGuard tunnel to operator ground service | Outbound only, small, fast handshake over satcom |
+| Ground link security | One WireGuard tunnel per bearer to the operator ground service | Outbound only, small, fast handshake over satcom; policy routing by source address pins each tunnel to its bearer |
+| Air-ground protocol | CFB frames in UDP, acked by sequence number (`cfbd/transport.rs`, reference ground: `cfb-ground`) | End-to-end delivery, no TCP head-of-line blocking on lossy satcom |
+| Edge apps | Declarative signed rule packages (`cfb-core::edge`), see `06-edge-apps.md` | Results instead of raw data on paid links |
 
 ## Modules in software
 
@@ -60,7 +62,12 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-030 | Queue shall be byte-bounded; evict lowest priority oldest first, never higher priority | `queue.rs` `push` | `eviction_lowest_priority_oldest_first`, `low_priority_never_evicts_higher` |
 | CFB-HLR-031 | Expired messages shall be dropped | `queue.rs` `expire` | `ttl_expiry` |
 | CFB-HLR-032 | Corrupt/missing snapshot shall give empty queue, not a failure | `queue.rs` `load_or_new` | `save_and_load_file`, `snapshot_roundtrip_and_corruption` |
+| CFB-HLR-033 | A sent message shall stay queued until acked by the ground, and be resent after `retry_s` | `queue.rs` `peek_ready`/`mark_sent` | `sent_messages_wait_for_ack_then_retry` |
 | CFB-HLR-040 | Update only parked, engine off, maint mode, voltage OK, signed, in ASCI, hash OK | `update.rs` | all `update::tests` |
+| CFB-HLR-041 | OTA download only over a link permitted for downloads (in flight: configured unmetered links only) | `ota.rs`, `cfbd`, `config.rs` | `happy_path`, `inflight_download_over_cellular_rejected` |
+| CFB-HLR-042 | OTA install only with gate open and technician confirmation | `ota.rs` | `happy_path` |
+| CFB-HLR-043 | Reboot into the new slot deferred until the gate is open again | `ota.rs` | `reboot_deferred_until_gate_open_again` |
+| CFB-HLR-044 | Interrupted download resumes; failed verification discards the package | `ota.rs`, `ota_exec.rs` | `link_loss_aborts_and_resumes`, `bad_package_not_retried_until_new_announcement`, `verify_dir_accepts_signed_package_and_rejects_tampered_bundle` |
 | CFB-HLR-050 | Config allowing cellular/Wi-Fi client in flight shall be rejected | `config.rs` `validate` | `cellular_in_flight_is_rejected` |
 | CFB-HLR-055 | ARINC 429 words with bad parity, non-normal SSM, wrong channel/SDI or stale age shall not be used | `arinc429.rs` `Decoder` | `decoder_filters_parity_ssm_and_age`, `channel_and_sdi_filters` |
 | CFB-HLR-056 | BNR/BCD decoding per ARINC 429 (sign bit 29, up to 20 significant bits) | `arinc429.rs` | `bnr_roundtrip_positive_and_negative`, `known_bnr_vector`, `bcd_decoding` |
@@ -71,6 +78,12 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-061 | Aircraft vs own GNSS disagreement shall be flagged and reported | `reference.rs`, `cfbd` | `disagreement_flagged` |
 | CFB-HLR-070 | Configured vs detected modules shall be compared and mismatches reported | `modules.rs` | `detection_mismatch_reported` |
 | CFB-HLR-071 | A link or input shall only be enabled if its module is fitted | `config.rs` `validate_modules` | `enabled_link_without_module_rejected` |
+| CFB-HLR-080 | Edge apps shall only read a data copy and return outputs; no other access | `edge.rs` `EdgeApp`, `DataView` | by construction (interface), reviewed |
+| CFB-HLR-081 | Edge outputs limited per tick, per size and per flight | `edge.rs` `EdgeRuntime` | `runtime_enforces_output_and_byte_limits` |
+| CFB-HLR-082 | A panicking or CPU-overrunning app shall be disabled without affecting others | `edge.rs` | `panicking_app_is_disabled_others_continue`, `cpu_overrun_disables_after_limit` |
+| CFB-HLR-083 | App packages shall be signed and listed in the ASCI | `edge.rs` `load_verified` | `signed_package_must_be_in_asci` |
+| CFB-HLR-084 | Exceedance, trend and summary rules per package definition | `edge.rs` `RuleApp` | `exceedance_start_and_end`, `short_exceedance_not_reported`, `trend_needs_stability_and_reports_once_per_flight`, `summary_at_engine_stop` |
+| CFB-HLR-090 | Only frames from the configured ground address shall be accepted; link up/down from ground replies (strict) or unanswered sends (metered) | `cfbd/transport.rs` | `send_ack_and_uplink_roundtrip`, `foreign_sender_ignored`, `metered_bearer_optimistic_until_unanswered` |
 
 ## Phase logic
 

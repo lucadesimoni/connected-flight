@@ -16,11 +16,13 @@
 
 pub mod arinc429;
 pub mod config;
+pub mod edge;
 pub mod frame;
 pub mod gnss;
 pub mod imu;
 pub mod link;
 pub mod modules;
+pub mod ota;
 pub mod phase;
 pub mod queue;
 pub mod reference;

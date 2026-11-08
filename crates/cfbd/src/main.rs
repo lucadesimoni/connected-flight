@@ -4,23 +4,31 @@
 //!   raw inputs (ARINC 429, own GNSS, own IMU, discretes, link state)
 //!   -> decoders -> reference selection -> flight phase
 //!   -> radio enables, reports, advisories -> queue -> best permitted link.
+//!   -> edge apps (sandboxed rule packages) -> queue
+//!   -> ground transport (UDP in WireGuard per bearer, acked) / OTA updates.
 //! All decisions are in `cfb-core`; this file is wiring.
 //!
 //! Usage:
 //!   cfbd --config /etc/cfb/cfb.toml                    # live, inputs on stdin
 //!   cfbd --config config/cfb.toml --simulate           # scripted demo flight
 //!   cfbd --config config/cfb.toml --simulate --hard-landing
+//!   cfbd --config config/cfb-pilatus-example.toml --simulate --apps config/apps
 
 mod input;
+mod ota_exec;
 mod sim;
+mod transport;
 
-use cfb_core::arinc429::{Decoder, Word};
+use cfb_core::arinc429::{Decoder, Ssm, Word};
+use cfb_core::edge::{AppPackage, DataView, EdgeRuntime, RuntimeEvent};
+use cfb_core::ota::{Ota, OtaCmd, OtaCtx, OtaState};
 use cfb_core::frame::EPOCH_2020;
 use cfb_core::gnss::NmeaParser;
 use cfb_core::imu::{EngineVibDetector, ImuProcessor};
 use cfb_core::reference;
 use cfb_core::*;
 use input::{Inputs, LineInputs};
+use std::path::Path;
 use std::collections::BTreeMap;
 use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
@@ -60,17 +68,79 @@ impl Out {
     }
 }
 
+/// Load edge app packages. Live: each must be signed and listed in the
+/// signed ASCI. Simulation: signatures are not checked (development only).
+fn load_apps(cfg: &Config, gate: &UpdateGate, simulate: bool, dirs: &[String]) -> EdgeRuntime {
+    let mut rt = EdgeRuntime::new(cfg.edge.limits);
+    let asci = if simulate {
+        None
+    } else {
+        let Some(a) = &cfg.edge.asci else { return rt };
+        match (std::fs::read(a), std::fs::read(format!("{a}.sig"))) {
+            (Ok(b), Ok(sig)) => match gate.verify_asci(&b, &sig) {
+                Ok(x) => Some(x),
+                Err(e) => {
+                    eprintln!("edge: ASCI rejected ({e:?}); no apps loaded");
+                    return rt;
+                }
+            },
+            _ => {
+                eprintln!("edge: ASCI {a} missing; no apps loaded");
+                return rt;
+            }
+        }
+    };
+    if simulate {
+        println!("edge: SIMULATION - app signatures not checked");
+    }
+    for dir in dirs {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect();
+        files.sort();
+        for f in files {
+            let Ok(bytes) = std::fs::read(&f) else { continue };
+            let pkg = match &asci {
+                None => AppPackage::parse(&bytes),
+                Some(a) => match std::fs::read(format!("{}.sig", f.display())) {
+                    Ok(sig) => AppPackage::load_verified(gate, a, &bytes, &sig),
+                    Err(_) => Err("no signature".into()),
+                },
+            };
+            match pkg {
+                Ok(p) => {
+                    println!("edge: loaded {} {} ({})", p.app.id, p.app.version, p.app.part_number);
+                    rt.add(Box::new(p.into_app()));
+                }
+                Err(e) => eprintln!("edge: skipped {}: {e}", f.display()),
+            }
+        }
+    }
+    rt
+}
+
+fn ota_state_name(s: &OtaState) -> String {
+    match s {
+        OtaState::Verified(m) | OtaState::Installing(m) | OtaState::PendingReboot(m) => {
+            format!("{} {} {}", format!("{s:?}").split('(').next().unwrap_or(""), m.part_number, m.version)
+        }
+        OtaState::Failed { reason, .. } => format!("Failed: {reason}"),
+        other => format!("{other:?}"),
+    }
+}
+
 fn main() {
     let mut cfg_path = PathBuf::from("/etc/cfb/cfb.toml");
     let (mut simulate, mut hard_landing) = (false, false);
+    let mut apps_override: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--config" => cfg_path = args.next().map(PathBuf::from).unwrap_or(cfg_path),
             "--simulate" => simulate = true,
             "--hard-landing" => hard_landing = true,
+            "--apps" => apps_override = args.next(),
             "-h" | "--help" => {
-                println!("cfbd [--config PATH] [--simulate [--hard-landing]]");
+                println!("cfbd [--config PATH] [--apps DIR] [--simulate [--hard-landing]]");
                 return;
             }
             other => {
@@ -97,7 +167,7 @@ fn main() {
             t: 0,
             hard_landing,
             hw: m.expected_ids().into_iter().map(String::from).collect(),
-            has_arinc: m.arinc429.is_some(),
+            labels: if m.arinc429.is_some() { cfg.arinc429.labels.clone() } else { vec![] },
             seed: 42,
         })
     } else {
@@ -119,6 +189,35 @@ fn main() {
     let mut out = Out { queue, seq: 0 };
     let mut det = PhaseDetector::new(cfg.phase);
     let mut lm = LinkManager::new(cfg.links.clone());
+    let gate = UpdateGate {
+        trusted_keys: cfg.trusted_verifying_keys().unwrap_or_default(),
+        hw_part_number: cfg.update.hw_part_number.clone(),
+        installed_version: env!("CARGO_PKG_VERSION").into(),
+        min_supply_v: cfg.update.min_supply_v,
+    };
+
+    // Edge apps.
+    let app_dirs = apps_override.map(|d| vec![d]).unwrap_or_else(|| cfg.edge.app_dirs.clone());
+    let mut edge = load_apps(&cfg, &gate, simulate, &app_dirs);
+
+    // Ground transport: one UDP socket per IP bearer (live mode only).
+    let mut bearers: Vec<transport::Bearer> = Vec::new();
+    if let (false, Some(tr)) = (simulate, &cfg.transport) {
+        let ground = tr.ground.parse().expect("validated");
+        for (k, b) in &tr.bearers {
+            match transport::Bearer::open(*k, b, ground) {
+                Ok(x) => bearers.push(x),
+                Err(e) => eprintln!("transport: bearer {k:?} ({}) not available: {e}", b.local),
+            }
+        }
+    }
+    let retry_s = cfg.transport.as_ref().map_or(15, |t| t.retry_s);
+
+    // OTA.
+    let mut ota = Ota::new(cfg.ota.retry_s);
+    let mut ota_exec = ota_exec::OtaExec::new(cfg.ota.clone(), simulate);
+    let mut last_ota_state = String::new();
+    let confirm_file = Path::new("/run/cfb/ota/confirm");
 
     let mut rf_enabled: BTreeMap<LinkKind, bool> = BTreeMap::new();
     let mut last_phase = det.phase();
@@ -197,6 +296,7 @@ fn main() {
         }
         if phase == FlightPhase::Airborne && !flown_this_leg {
             lm.reset_flight_budgets();
+            edge.reset_flight();
             flown_this_leg = true;
             landing_nz_max = 0.0;
         }
@@ -219,6 +319,44 @@ fn main() {
                     p.capture_rest();
                 }
             }
+        }
+
+        // ---- edge apps (CFB-HLR-080..083)
+        let mut dv = DataView { t, phase: Some(phase), values: BTreeMap::new() };
+        if let Some((la, lo)) = r.pos {
+            dv.set("lat", Some(la));
+            dv.set("lon", Some(lo));
+        }
+        dv.set("gs", r.gs_kt.map(f64::from));
+        dv.set("track", r.track_deg.map(f64::from));
+        dv.set("alt", r.alt_ft.map(f64::from));
+        dv.set("vs", r.vs_fpm.map(f64::from));
+        dv.set("engine", r.engine_running.map(|e| if e { 1.0 } else { 0.0 }));
+        dv.set("airborne", Some(if phase.is_confirmed_ground() { 0.0 } else { 1.0 }));
+        if let Some(sum) = imu_sum {
+            dv.set("nz_max", Some(sum.nz_max as f64));
+            dv.set("nz_min", Some(sum.nz_min as f64));
+            dv.set("vib", Some(sum.vib_rms_g as f64));
+            dv.set("long_accel", Some(sum.long_accel_g as f64));
+        }
+        if let Some(d) = &arinc {
+            for (k, v) in d.values() {
+                if v.ssm == Ssm::Normal && t - v.t <= cfg.reference.arinc_max_age_s {
+                    dv.set(k, Some(v.value));
+                }
+            }
+        }
+        let (edge_out, edge_ev) = edge.tick(&dv);
+        for o in edge_out {
+            println!("[{t:>6.0}s] EDGE {}", String::from_utf8_lossy(&o.payload));
+            out.send(MsgType::Edge, o.priority, o.payload, t, o.ttl_s);
+        }
+        for e in edge_ev {
+            let txt = match e {
+                RuntimeEvent::Disabled { app, reason } => format!("EDGE app {app} DISABLED: {reason}"),
+                RuntimeEvent::Dropped { app, outputs, reason } => format!("EDGE app {app}: {outputs} output(s) dropped ({reason})"),
+            };
+            out.event(t, MsgType::Health, Priority::Normal, txt);
         }
 
         if phase == FlightPhase::OnGround && flown_this_leg {
@@ -275,20 +413,68 @@ fn main() {
         }
         last_ref = r;
 
+        // ---- receive: acks and uplink messages
+        for b in bearers.iter_mut() {
+            for rx in b.poll(t) {
+                match rx {
+                    transport::Rx::Acked(id) => {
+                        out.queue.ack(id);
+                    }
+                    transport::Rx::Uplink(f) => {
+                        let txt = String::from_utf8_lossy(&f.payload).into_owned();
+                        println!("[{t:>6.0}s] UPLINK via {:?} {:?}: {txt}", b.kind, f.msg_type);
+                        if f.msg_type == MsgType::Text && txt.starts_with("OTA AVAILABLE") {
+                            ota.announce();
+                        }
+                    }
+                }
+            }
+        }
+        if simulate && cfg.ota.enabled && t == 700.0 {
+            println!("[{t:>6.0}s] UPLINK OTA AVAILABLE (simulated ground announcement)");
+            ota.announce();
+        }
+
+        // ---- link status: from the bearers when the transport runs here
+        let status: Vec<LinkStatus> = if bearers.is_empty() {
+            s.links.values().copied().filter(|l| m.has_link(l.kind)).collect()
+        } else {
+            bearers.iter().map(|b| b.status(t)).collect()
+        };
+
         // ---- drain the queue onto links
-        out.queue.expire(t as u64);
-        let status: Vec<LinkStatus> = s.links.values().copied().filter(|l| m.has_link(l.kind)).collect();
-        while let Some(msg) = out.queue.peek(|p| lm.can_carry(phase, p, &status)) {
+        let now_u = t as u64;
+        out.queue.expire(now_u);
+        let mut budget: BTreeMap<LinkKind, usize> = bearers.iter().map(|b| (b.kind, b.tick_budget())).collect();
+        while let Some(msg) = out.queue.peek_ready(|p| lm.can_carry(phase, p, &status), now_u, retry_s) {
             let Some(kind) = lm.select(phase, msg.priority, msg.payload.len(), &status) else { break };
             let (id, len) = (msg.id, msg.payload.len());
-            // Live mode hands the frame to the link adapter here; delivery is
-            // acknowledged end-to-end by the ground service (MsgType::Ack).
-            // The simulation acks immediately.
+            if let Some(b) = bearers.iter_mut().find(|b| b.kind == kind) {
+                let left = budget.get_mut(&kind).expect("bearer budget");
+                if *left == 0 {
+                    break; // this second's capacity is used; continue next tick
+                }
+                *left = left.saturating_sub(len);
+                let frame = msg.payload.clone();
+                if let Err(e) = b.send(&frame, id, t) {
+                    eprintln!("transport {kind:?}: {e}");
+                    break;
+                }
+                out.queue.mark_sent(id, now_u); // removed when the ground acks
+            } else {
+                // Simulation (no transport): delivery assumed immediate.
+                out.queue.ack(id);
+            }
             lm.record_tx(kind, len);
             let e = sent.entry(kind).or_default();
             e.0 += 1;
             e.1 += len as u64;
-            out.queue.ack(id);
+        }
+        for b in bearers.iter_mut() {
+            if lm.tx_permitted(b.kind, phase) {
+                b.maybe_keepalive(t, out.seq);
+                out.seq = out.seq.wrapping_add(1);
+            }
         }
 
         if !simulate {
@@ -301,21 +487,57 @@ fn main() {
             sd_notify("WATCHDOG=1");
         }
 
+        // ---- OTA (CFB-HLR-041..044)
+        let st = update::AircraftState {
+            phase,
+            engine_running: r.engine_running,
+            ground_speed_kt: r.gs_kt,
+            maintenance_mode: s.maintenance,
+            supply_v: s.supply_v,
+        };
+        let gate_open = gate.check_conditions(&st).is_ok();
+        if cfg.ota.enabled {
+            let dl_link = if phase.is_confirmed_ground() {
+                lm.select(phase, Priority::Bulk, 0, &status)
+            } else {
+                status
+                    .iter()
+                    .find(|l| l.up && cfg.ota.inflight_download_links.contains(&l.kind) && lm.tx_permitted(l.kind, phase))
+                    .map(|l| l.kind)
+            };
+            let confirmed = if simulate { s.maintenance } else { confirm_file.exists() };
+            if let Some(res) = ota_exec.poll(t) {
+                ota.complete(t, res);
+            }
+            if !ota_exec.busy() || matches!(ota.state, OtaState::Downloading) {
+                let ctx = OtaCtx { download_link_ok: dl_link.is_some(), gate_open, confirmed };
+                if let Some(cmd) = ota.step(t, ctx) {
+                    let bind_ip = dl_link
+                        .and_then(|k| cfg.transport.as_ref()?.bearers.get(&k))
+                        .and_then(|b| b.local.parse::<std::net::SocketAddr>().ok())
+                        .map(|a| a.ip().to_string());
+                    if cmd == OtaCmd::StartDownload {
+                        println!("[{t:>6.0}s] OTA download over {:?}{}", dl_link.unwrap(),
+                            if phase.is_confirmed_ground() { "" } else { " (in flight: download only, install on ground)" });
+                    }
+                    if cmd == OtaCmd::Install && !simulate {
+                        let _ = std::fs::remove_file(confirm_file);
+                    }
+                    if cmd == OtaCmd::Reboot && simulate {
+                        println!("[{t:>6.0}s] OTA reboot into new slot (simulated); mark-good after health check");
+                    }
+                    ota_exec.run(&cmd, t, &gate, bind_ip);
+                }
+            }
+            let name = ota_state_name(&ota.state);
+            if name != last_ota_state {
+                out.event(t, MsgType::Health, Priority::Normal, format!("OTA {name}"));
+                last_ota_state = name;
+            }
+        }
+
         // ---- update readiness, shown on the maintenance page
         if s.maintenance && phase.is_confirmed_ground() && (t as u64).is_multiple_of(30) {
-            let gate = UpdateGate {
-                trusted_keys: cfg.trusted_verifying_keys().unwrap_or_default(),
-                hw_part_number: cfg.update.hw_part_number.clone(),
-                installed_version: env!("CARGO_PKG_VERSION").into(),
-                min_supply_v: cfg.update.min_supply_v,
-            };
-            let st = update::AircraftState {
-                phase,
-                engine_running: r.engine_running,
-                ground_speed_kt: r.gs_kt,
-                maintenance_mode: s.maintenance,
-                supply_v: s.supply_v,
-            };
             match gate.check_conditions(&st) {
                 Ok(()) => println!("[{t:>6.0}s] update gate: OPEN (ready to load software)"),
                 Err(e) => println!("[{t:>6.0}s] update gate: blocked {e:?}"),
@@ -336,6 +558,9 @@ fn main() {
     }
     for (k, (n, b)) in &sent {
         println!("{k:?}: {n} frames, {b} bytes");
+    }
+    for (id, ver, en) in edge.apps() {
+        println!("edge app {id} {ver}: {}", if en { "running" } else { "DISABLED" });
     }
     println!("still queued: {} messages, {} bytes; evicted: {}", out.queue.len(), out.queue.bytes(), out.queue.evicted);
 }

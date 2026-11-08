@@ -42,6 +42,9 @@ pub struct Message {
     /// Drop the message after this many seconds; 0 = never expires.
     pub ttl_s: u64,
     pub payload: Vec<u8>,
+    /// When it was last handed to a link and is waiting for the ground
+    /// ack. Not persisted: after a restart everything unacked is resent.
+    pub sent_t: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -105,7 +108,7 @@ impl StoreForwardQueue {
         let id = self.next_id;
         self.next_id += 1;
         self.bytes += payload.len();
-        self.lanes[priority as usize].push_back(Message { id, priority, created_t: now, ttl_s, payload });
+        self.lanes[priority as usize].push_back(Message { id, priority, created_t: now, ttl_s, payload, sent_t: None });
         Some(id)
     }
 
@@ -133,6 +136,29 @@ impl StoreForwardQueue {
             .iter()
             .filter(|p| allowed(**p))
             .find_map(|p| self.lanes[*p as usize].front())
+    }
+
+    /// Like `peek`, but skips messages already sent and still waiting for
+    /// their ack, unless `retry_s` has passed (CFB-HLR-033).
+    pub fn peek_ready(&self, allowed: impl Fn(Priority) -> bool, now: u64, retry_s: u64) -> Option<&Message> {
+        Priority::ALL_DESC
+            .iter()
+            .filter(|p| allowed(**p))
+            .find_map(|p| {
+                self.lanes[*p as usize]
+                    .iter()
+                    .find(|m| m.sent_t.is_none_or(|s| now.saturating_sub(s) >= retry_s))
+            })
+    }
+
+    /// Record that a message was handed to a link.
+    pub fn mark_sent(&mut self, id: u64, now: u64) {
+        for lane in &mut self.lanes {
+            if let Some(m) = lane.iter_mut().find(|m| m.id == id) {
+                m.sent_t = Some(now);
+                return;
+            }
+        }
     }
 
     /// Remove a message once the far end confirms delivery.
@@ -200,7 +226,7 @@ impl StoreForwardQueue {
             let len = r.u32()? as usize;
             let payload = r.take(len)?.to_vec();
             q.bytes += payload.len();
-            q.lanes[prio as usize].push_back(Message { id, priority: prio, created_t, ttl_s, payload });
+            q.lanes[prio as usize].push_back(Message { id, priority: prio, created_t, ttl_s, payload, sent_t: None });
         }
         Ok(q)
     }
@@ -300,6 +326,20 @@ mod tests {
         q.push(Priority::Critical, vec![0; 20], 0, 0).unwrap();
         assert!(q.push(Priority::Bulk, vec![0; 5], 1, 0).is_none());
         assert_eq!(q.len_of(Priority::Critical), 1);
+    }
+
+    #[test]
+    fn sent_messages_wait_for_ack_then_retry() {
+        let mut q = StoreForwardQueue::new(1000);
+        let a = q.push(Priority::High, vec![1], 0, 0).unwrap();
+        let b = q.push(Priority::High, vec![2], 0, 0).unwrap();
+        q.mark_sent(a, 10);
+        assert_eq!(q.peek_ready(|_| true, 11, 15).unwrap().id, b);
+        q.mark_sent(b, 11);
+        assert!(q.peek_ready(|_| true, 12, 15).is_none());
+        assert_eq!(q.peek_ready(|_| true, 25, 15).unwrap().id, a, "retry after timeout");
+        assert!(q.ack(a));
+        assert_eq!(q.peek_ready(|_| true, 26, 15).unwrap().id, b);
     }
 
     #[test]

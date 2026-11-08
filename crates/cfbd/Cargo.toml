@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 cfb-core = { path = "../cfb-core" }
 ed25519-dalek = "2"
+
+[dev-dependencies]
+sha2 = "0.10"

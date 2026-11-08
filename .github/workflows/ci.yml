@@ -13,6 +13,7 @@ jobs:
       - run: cargo run --release --bin cfbd -- --config config/cfb.toml --simulate
       - run: cargo run --release --bin cfbd -- --config config/cfb.toml --simulate --hard-landing
       - run: cargo run --release --bin cfbd -- --config config/cfb-minimal.toml --simulate
+      - run: cargo run --release --bin cfbd -- --config config/cfb-pc12-example.toml --simulate --apps config/apps
   cross-arm64:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -24,3 +25,4 @@ jobs:
           name: cfb-aarch64
           path: |
             target/release/cfbd
+            target/release/cfb-ground

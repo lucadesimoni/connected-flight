@@ -1,0 +1,13 @@
+// cfbd runs as the unprivileged user "cfb". It may ask the RAUC service to
+// install a bundle and logind to reboot - nothing else. The update gate in
+// cfbd decides *when*; RAUC still checks the bundle signature itself.
+polkit.addRule(function (action, subject) {
+    if (subject.user != "cfb") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (action.id == "de.pengutronix.rauc.install" ||
+        action.id == "org.freedesktop.login1.reboot") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

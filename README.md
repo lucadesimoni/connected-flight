@@ -18,6 +18,12 @@ installed as a **minor change** with **DAL D field-loadable software**.
   GNSS takes over, and while both work they are cross-checked. The
   accelerometer detects a running engine from vibration and flags hard
   landings and turbulence for maintenance.
+* **Live in flight, the rest on ground:** Starlink/LEO and Iridium in flight,
+  5G and Wi-Fi on ground. UDP runs inside one WireGuard tunnel per bearer,
+  and the ground acks every frame end to end.
+* **Edge apps:** signed, sandboxed rule packages run on board:
+  exceedances, engine trend, flight summary. They send results instead of
+  raw data.
 * **Safety by hardware:** receive-only, isolated avionics interfaces, and a
   WoW-driven hardware interlock that holds the cellular modem off in flight.
   Because of that, software updates stay low-risk and cheap to approve.
@@ -26,9 +32,13 @@ installed as a **minor change** with **DAL D field-loadable software**.
   free ground link and uploads automatically after landing.
 * **Small:** one ~600 KB Rust binary, no async runtime, <64 MB memory cap,
   ~4–6 W for the whole box.
-* **Safe updates:** RAUC A/B slots, Ed25519-signed manifest and an Approved
-  Software Configuration Index (ASCI). Installs only when parked, engine
-  off, and in maintenance mode, with automatic rollback.
+* **Safe OTA updates:**
+  * The ground announces a package; the box downloads it on ground (and,
+    if configured, in flight over Starlink) and verifies it.
+  * RAUC A/B slots, an Ed25519-signed manifest, and an Approved Software
+    Configuration Index (ASCI).
+  * It installs only when parked, engine off and confirmed by a technician.
+    The reboot waits until it is safe, and rollback is automatic.
 * **One software for all CS-23 types:** the aircraft-specific values are in a
   signed config file.
 
@@ -44,15 +54,20 @@ installed as a **minor change** with **DAL D field-loadable software**.
 | [02 Certification strategy](docs/02-certification-basis.md) | Approval route, CS-23 compliance matrix, FHA, DAL D, DO-160G, security |
 | [03 Hardware](docs/03-hardware.md) | Pi 5 vs CM5, carrier block diagram, RF interlock, power budget, BOM |
 | [04 Software architecture](docs/04-software-architecture.md) | Stack, HLR table with traceability to tests, phase logic, data efficiency |
-| [05 Update process](docs/05-update-process.md) | Release, signing, ASCI, install gate, A/B rollback, records |
+| [05 Update process](docs/05-update-process.md) | Release, signing, ASCI, OTA download/verify/install, A/B rollback, records |
+| [06 Edge apps](docs/06-edge-apps.md) | In-box computing: containment argument, rule packages, release |
+| [07 PC-12 / PC-24](docs/07-pc12-pc24-installation.md) | Certification basis, data access, Starlink/antennas, environment, sequence |
 
 ## Repository layout
 
 ```
 crates/cfb-core   arinc429, gnss, imu, reference, modules, phase, link, queue, frame, update, config
-crates/cfbd       daemon (1 Hz loop) + cfb-release signing tool
+crates/cfbd       daemon (1 Hz loop), transport, OTA executor, simulator;
+                  bins: cfb-release (signing), cfb-ground (reference ground service)
 config/cfb.toml          full build: ARINC + GNSS/IMU + Wi-Fi + 5G + Iridium
 config/cfb-minimal.toml  ground build: GNSS/IMU + Wi-Fi + 4G, no ARINC, no satcom
+config/cfb-pc12-example.toml  PC-12-class: ARINC + 5G + Starlink + Iridium, transport, OTA, edge
+config/apps/             example edge app package (turboprop ops)
 os/rauc           RAUC A/B slot configuration
 os/systemd        hardened service units, watchdog, mark-good
 docs/             engineering and certification documents
@@ -61,10 +76,32 @@ docs/             engineering and certification documents
 ## Build and run
 
 ```sh
-cargo test                                    # 68 HLR-traced tests
+cargo test                                    # 91 HLR-traced tests
 cargo run --release --bin cfbd -- --config config/cfb.toml --simulate
 cargo run --release --bin cfbd -- --config config/cfb.toml --simulate --hard-landing
 cargo run --release --bin cfbd -- --config config/cfb-minimal.toml --simulate
+cargo run --release --bin cfbd -- --config config/cfb-pc12-example.toml --simulate --apps config/apps
+```
+
+The PC-12-class run shows the full chain:
+
+```
+[   520s] EDGE tprop-ops|TREND ENG_CRUISE n=121 torque=85.0,itt=720.0,ng=97.0,...
+[   605s] EDGE tprop-ops|EXC ITT_HIGH START itt>800.0 val=812.0
+[   613s] EDGE tprop-ops|EXC ITT_HIGH END dur=13s peak=812.0
+[   700s] OTA download over LeoSat (in flight: download only, install on ground)
+[   722s] OTA Verified CFB-SW-0100 0.2.0
+[  1811s] EDGE tprop-ops|SUM block=29min flight=25min dist=60NM max_alt=8700ft ...
+[  1851s] OTA Installing CFB-SW-0100 0.2.0           <- parked, engine off, confirmed
+[  1881s] OTA reboot into new slot (simulated)
+LeoSat: 69 frames, 2479 bytes
+```
+
+Bench test of the real transport (UDP, acks, uplink):
+
+```sh
+cfb-ground --listen 127.0.0.1:7400 --announce-ota
+cfbd --config <config with [transport] pointing at 127.0.0.1:7400> < inputs
 ```
 
 The simulator generates the raw inputs the real I/O service would deliver:
@@ -111,7 +148,11 @@ cfb-release verify <pubkey-hex> manifest.toml
 | Release signing tool | Done |
 | `cfb-io` adapters (ARINC SPI driver, GNSS UART, IMU via IIO, gpiod, ModemManager, Certus AT driver, ID EEPROMs) | **To do** |
 | Base board and module PCBs | **To do** |
-| Link adapters + WireGuard ground service + end-to-end acks | **To do** (simulation acks immediately) |
+| Air-ground transport (UDP per bearer, acks, retry, link health), reference ground service | Done, tested on localhost |
+| Edge app runtime + rule packages (exceedance, trend, summary) | Done, unit-tested |
+| OTA state machine + executor (curl, verify, rauc, deferred reboot) | Done; tested in simulation; real RAUC/curl on target to do |
+| WireGuard / policy-routing setup in the OS image, production ground service | **To do** |
+| Starlink terminal installation approval per type | **To do** (outside the box) |
 | Yocto/Buildroot image, secure boot, dm-verity | **To do** (RAUC + units provided) |
 | Carrier board, enclosure, DO-160G tests | **To do** |
 | PSAC / SDP / SVP / SCMP / SQAP, FHA sign-off, approval | **To do** with your DOA |

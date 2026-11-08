@@ -69,7 +69,7 @@ pub enum Blocker {
     SupplyVoltageLow,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateError {
     Conditions(Vec<Blocker>),
     BadManifest(String),
@@ -111,6 +111,24 @@ impl UpdateGate {
             b.push(Blocker::SupplyVoltageLow);
         }
         if b.is_empty() { Ok(()) } else { Err(UpdateError::Conditions(b)) }
+    }
+
+    /// Detached Ed25519 signature check against the trusted keys.
+    pub fn verify_detached(&self, data: &[u8], sig: &[u8]) -> Result<(), UpdateError> {
+        self.verify_sig(data, sig)
+    }
+
+    /// Verify and parse the ASCI.
+    pub fn verify_asci(&self, asci_toml: &[u8], asci_sig: &[u8]) -> Result<Asci, UpdateError> {
+        self.verify_sig(asci_toml, asci_sig)?;
+        parse_toml(asci_toml)
+    }
+
+    /// Is this part number + version approved for this hardware?
+    pub fn approved(&self, asci: &Asci, part_number: &str, version: &str) -> bool {
+        asci.entries.iter().any(|e| {
+            e.part_number == part_number && e.version == version && e.hw_part_number == self.hw_part_number
+        })
     }
 
     fn verify_sig(&self, data: &[u8], sig: &[u8]) -> Result<(), UpdateError> {

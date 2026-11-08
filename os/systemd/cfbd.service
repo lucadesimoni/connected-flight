@@ -18,7 +18,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/data/cfb
+# /data/updates: OTA downloads; /run/cfb: OTA confirm flag from the maintenance page
+ReadWritePaths=/data/cfb /data/updates /run/cfb
+# rauc install and reboot are granted to user cfb by os/polkit/50-cfb.rules
+# (nothing else); the RAUC daemon does the privileged slot write.
 MemoryMax=64M
 CPUQuota=50%
 

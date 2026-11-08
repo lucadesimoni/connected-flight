@@ -1,0 +1,59 @@
+# Edge app package: turboprop operations monitoring (example).
+# A signed, versioned part: listed in the apps ASCI, signed with
+# `cfb-release sign <key> turboprop-ops.toml` -> turboprop-ops.toml.sig.
+# Limits below are EXAMPLES - take them from the AFM / engine manual.
+# Outputs go to maintenance / ops on the ground only, never to the crew.
+
+[app]
+id          = "tprop-ops"
+part_number = "CFB-APP-0101"
+version     = "1.0.0"
+
+# ---- exceedances -------------------------------------------------------
+[[exceedance]]
+id       = "ITT_HIGH"
+param    = "itt"            # ARINC parameter name from [[arinc429.labels]]
+above    = 800.0            # EXAMPLE limit, deg C
+for_s    = 5
+when     = "any"
+priority = "high"           # goes out over satcom in flight
+
+[[exceedance]]
+id       = "TQ_HIGH"
+param    = "torque"
+above    = 100.0            # EXAMPLE limit, %
+for_s    = 3
+priority = "high"
+
+[[exceedance]]
+id       = "NZ_HIGH"
+param    = "nz_max"         # own accelerometer
+above    = 2.0
+for_s    = 0
+when     = "airborne"
+priority = "high"
+
+[[exceedance]]
+id       = "HIGH_DESCENT"
+param    = "vs"
+below    = -2000.0          # ft/min
+for_s    = 10
+when     = "airborne"
+priority = "normal"
+
+# ---- engine trend: one stable-cruise snapshot per flight --------------
+[[trend]]
+id             = "ENG_CRUISE"
+params         = ["torque", "itt", "ng", "fuel_flow", "oat", "pressure_altitude", "gs"]
+stable_s       = 120
+max_per_flight = 1
+priority       = "normal"
+stable = [
+  { param = "pressure_altitude", band = 100.0, min = 5000.0 },
+  { param = "vs",                abs_max = 300.0 },
+  { param = "torque",            band = 3.0 },
+]
+
+# ---- flight summary at engine shutdown ---------------------------------
+[summary]
+enabled = true

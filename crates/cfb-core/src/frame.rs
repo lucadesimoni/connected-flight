@@ -31,6 +31,8 @@ pub enum MsgType {
     Health = 6,
     /// Chunk of a large file (flight data, logs). Ground links only.
     FileChunk = 7,
+    /// Output of an edge app (exceedance, trend, summary).
+    Edge = 8,
 }
 
 impl MsgType {
@@ -43,6 +45,7 @@ impl MsgType {
             5 => Self::Ack,
             6 => Self::Health,
             7 => Self::FileChunk,
+            8 => Self::Edge,
             _ => return None,
         })
     }
@@ -165,6 +168,20 @@ impl PositionReport {
     }
 }
 
+/// Ack payload: the acknowledged frame sequence numbers, u16 LE each.
+pub fn encode_ack(seqs: &[u16]) -> Vec<u8> {
+    seqs.iter().flat_map(|s| s.to_le_bytes()).collect()
+}
+
+pub fn decode_ack(payload: &[u8]) -> Vec<u16> {
+    payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+}
+
+/// Sequence number of an encoded frame without a full decode.
+pub fn frame_seq(bytes: &[u8]) -> Option<u16> {
+    (bytes.len() >= 4 && bytes[0] == MAGIC).then(|| u16::from_le_bytes([bytes[2], bytes[3]]))
+}
+
 fn write_leb128(out: &mut Vec<u8>, mut v: u64) {
     loop {
         let byte = (v & 0x7F) as u8;
@@ -236,6 +253,14 @@ mod tests {
         enc[9] ^= 1;
         assert_eq!(Frame::decode(&enc), Err(FrameError::BadCrc));
         assert_eq!(Frame::decode(&enc[..5]), Err(FrameError::TooShort));
+    }
+
+    #[test]
+    fn ack_payload_roundtrip() {
+        let p = encode_ack(&[1, 65535, 300]);
+        assert_eq!(decode_ack(&p), vec![1, 65535, 300]);
+        let f = Frame { msg_type: MsgType::Edge, seq: 777, time: 0, payload: vec![] };
+        assert_eq!(frame_seq(&f.encode()), Some(777));
     }
 
     #[test]

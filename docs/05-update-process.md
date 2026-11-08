@@ -24,9 +24,16 @@ Keys: release keys stay on a hardware token in the DOA; the file-based
 
 ## Delivery to the aircraft
 
-* **Over the air** on ground (cellular / hangar Wi-Fi): the package is
-  downloaded in the background into `/data/updates`. Downloading is allowed
-  any time on ground; **installing** is not automatic.
+* **Over the air**: the ground service announces a package (uplink text
+  `OTA AVAILABLE`). The box downloads it in the background into
+  `/data/updates` with `curl`, bound to the chosen bearer's tunnel address:
+  * on ground: over the cheapest permitted ground link (Wi-Fi, 5G);
+  * in flight: only over links listed in `ota.inflight_download_links`
+    (e.g. Starlink). This is **download only**; nothing is installed in
+    flight.
+
+  An interrupted download resumes (`curl -C -`). **Installing** is never
+  automatic.
 * **Locally**: USB stick or laptop on the maintenance port.
 
 ## Installation (maintenance task per ICA)
@@ -67,7 +74,18 @@ Then:
 | Power loss during slot write | Old slot still active and marked good; retry |
 | New software fails to start | Watchdog/boot counter → old slot |
 | Wrong package for HW | Rejected (manifest `compatible_hw`, RAUC `compatible`) |
-| Engine started during install | Install continues (inactive slot only, no effect on running system); the reboot shall be deferred until the gate is open again (design requirement, not yet implemented) |
+| Engine started during install | Install continues (inactive slot only, no effect on running system); the reboot waits until the gate is open again (CFB-HLR-043, `ota::tests::reboot_deferred_until_gate_open_again`) |
+| Link lost during download | Download stopped, resumed on the next permitted link (CFB-HLR-044) |
+| Package fails verification | Files deleted, not downloaded again until a new announcement |
+
+## Implementation
+
+| Part | Where |
+|---|---|
+| State machine (Idle → Downloading → Verifying → Verified → Installing → PendingReboot → Rebooting, Failed + retry) | `cfb-core::ota`, HLR 041–044, unit-tested |
+| Executor: curl download, verification in a worker thread, `rauc install`, `systemctl reboot` | `crates/cfbd/src/ota_exec.rs` |
+| Technician confirmation | `/run/cfb/ota/confirm` created by the maintenance page; consumed at install |
+| State reported to the ground | Health message `OTA <state>` on every change |
 
 ## Records
 
