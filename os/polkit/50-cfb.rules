@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
 // Proprietary software, not open source. See LICENSE.
 // cfbd runs as the unprivileged user "cfb". It may ask the RAUC service to
-// install a bundle, logind to reboot, and NetworkManager to switch the Wi-Fi
-// and cellular radios on/off (software RF inhibit) - nothing else. The update gate in
+// install a bundle, logind to reboot or power off (power-fail shutdown),
+// and NetworkManager to switch the Wi-Fi and cellular radios on/off
+// (software RF inhibit) - nothing else. The update gate in
 // cfbd decides *when*; RAUC still checks the bundle signature itself.
 polkit.addRule(function (action, subject) {
     if (subject.user != "cfb") {
@@ -10,6 +11,7 @@ polkit.addRule(function (action, subject) {
     }
     if (action.id == "de.pengutronix.rauc.install" ||
         action.id == "org.freedesktop.login1.reboot" ||
+        action.id == "org.freedesktop.login1.power-off" ||
         action.id == "org.freedesktop.NetworkManager.enable-disable-wifi" ||
         action.id == "org.freedesktop.NetworkManager.enable-disable-wwan") {
         return polkit.Result.YES;

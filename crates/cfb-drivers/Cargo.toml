@@ -1,0 +1,13 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+[package]
+name = "cfb-drivers"
+description = "Connected Flight Box hardware I/O drivers: links, sensors, outputs"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+cfb-core = { path = "../cfb-core" }

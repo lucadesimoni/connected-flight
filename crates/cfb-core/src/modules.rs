@@ -54,6 +54,9 @@ pub struct Modules {
     pub arinc429: Option<ArincModule>,
     pub gnss: bool,
     pub imu: bool,
+    /// Own barometer (on the reference sensor module).
+    #[serde(default)]
+    pub baro: bool,
     pub wifi: bool,
     pub cellular: Cellular,
     /// Satcom bearers fitted: `iridium`, `leo_sat`. Empty = no satcom.
@@ -96,6 +99,9 @@ impl Modules {
         }
         if self.imu {
             v.push("imu");
+        }
+        if self.baro {
+            v.push("baro");
         }
         if self.wifi {
             v.push("wifi");
@@ -140,6 +146,7 @@ mod tests {
             arinc429: Some(ArincModule { channels: 2, speed: ArincSpeed::Low }),
             gnss: true,
             imu: true,
+            baro: false,
             wifi: true,
             cellular: Cellular::Nr5g,
             satcom: vec![LinkKind::Iridium],

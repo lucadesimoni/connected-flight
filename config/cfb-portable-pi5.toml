@@ -1,0 +1,141 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+#
+# Connected Flight Box - PORTABLE KIT configuration for a Raspberry Pi 5
+#   USB GNSS, ISM330DHCX accelerometer + BMP390 barometer (I2C, IIO),
+#   Wi-Fi, USB 4G modem, physical radio switch, status LEDs, UPS power-fail,
+#   Iridium 9603 SBD (optional). No aircraft connection. Parts: docs/11.
+# Install: /etc/cfb/cfb.toml  (see docs/10-bench-and-portable-test.md)
+
+[aircraft]
+registration  = "PORTABLE"
+icao24        = "000000"
+aircraft_type = "Portable unit"
+bus_voltage   = 14            # not used on the bench; supply comes from discretes file
+
+[modules]
+gnss     = true
+imu      = true               # engine running from vibration, touchdown / turbulence Nz
+baro     = true               # cabin pressure altitude (unpressurised aircraft)
+wifi     = true
+cellular = "4g"
+satcom   = ["iridium"]        # Iridium 9603 SBD; remove with [sbd] and [links.iridium] if not fitted
+
+[imu]
+axes            = ["+x", "+y", "+z"]   # sensor -> aircraft (fwd, right, down): set from the mounting
+sample_rate_hz  = 100.0
+engine_vib_g    = 0.04
+engine_on_s     = 5.0
+engine_off_s    = 10.0
+hard_landing_nz = 1.8
+turbulence_dnz  = 1.0
+
+[phase]
+airborne_speed_kt  = 50.0
+ground_speed_kt    = 35.0
+airborne_confirm_s = 5.0
+ground_confirm_s   = 20.0
+input_timeout_s    = 10.0
+
+[links.wifi]
+enabled      = true
+ground_only  = true
+cost_per_mb  = 0.0
+min_priority = "bulk"
+
+[links.cellular]
+enabled = true
+ground_only = true
+cost_per_mb  = 0.01
+min_priority = "bulk"
+
+[links.iridium]
+enabled             = true
+ground_only         = false
+cost_per_mb         = 600.0
+min_priority        = "high"          # positions and alerts only
+flight_budget_bytes = 16384           # ≈ 50 SBD messages per flight
+
+[queue]
+max_bytes           = 67108864        # 64 MiB
+snapshot_path       = "/data/cfb/queue.bin"
+snapshot_interval_s = 60
+
+[reporting]
+position_interval_air_s    = 30
+position_interval_ground_s = 60
+position_ttl_s             = 0        # keep the in-flight track: uploads after landing
+
+[update]
+hw_part_number = "CFB-HW-PORTABLE"
+min_supply_v   = 11.5
+trusted_keys   = [
+  "789b1d55d02a7f1b13c7616635f496013fd40e6bd6da55f1d57dcfeb73149932",  # DEVELOPMENT key - replace with yours (cfb-release keygen)
+]
+
+[edge]
+asci     = "/etc/cfb/apps-asci.toml"
+app_dirs = ["/etc/cfb/apps"]
+
+[ota]
+enabled      = true
+# Served by the ground server inside the tunnel (see ground/README.md).
+base_url     = "http://10.66.0.1:8080/cfb/CFB-HW-PORTABLE"
+download_dir = "/data/updates"
+retry_s      = 300.0
+
+# ---- transport: one WireGuard tunnel per bearer (os/net/) ----------------
+[transport]
+ground  = "10.66.0.1:7400"
+retry_s = 15
+
+[transport.bearers.wifi]
+local        = "10.66.1.2:0"
+iface        = "wg-wifi"
+nominal_bps  = 10000000
+keepalive_s  = 15
+down_after_s = 45
+
+[transport.bearers.cellular]
+local        = "10.66.2.2:0"
+iface        = "wg-cell"
+nominal_bps  = 2000000
+keepalive_s  = 30
+down_after_s = 90
+
+# ---- software RF inhibit ---------------------------------------------------
+# Radios are switched OFF whenever on-ground is not confirmed, and "off" is
+# re-asserted every reassert_s. On the bench, SSH over Ethernet, not Wi-Fi:
+# the Wi-Fi radio goes off until the unit sees "on ground".
+[rf.wifi]
+on  = ["nmcli", "radio", "wifi", "on"]
+off = ["nmcli", "radio", "wifi", "off"]
+reassert_s = 60
+
+[rf.cellular]
+on  = ["nmcli", "radio", "wwan", "on"]
+off = ["nmcli", "radio", "wwan", "off"]
+reassert_s = 60
+
+# ---- portable kit hardware --------------------------------------------------
+# Physical radio switch: powers the 4G modem. Unknown state = OFF.
+[rf_switch]
+links = ["cellular"]
+
+# UPS / hold-up power-fail input: snapshot at once, power off after 5 s.
+[power]
+shutdown_after_s = 5.0
+off_cmd          = ["systemctl", "poweroff"]
+
+# LED-class devices from the gpio-led overlays (os/dt/config.txt.snippet).
+[status_leds]
+green = "/sys/class/leds/cfb-green"
+amber = "/sys/class/leds/cfb-amber"
+red   = "/sys/class/leds/cfb-red"
+gnss_fault_after_s = 30.0
+
+# Iridium 9603 on a USB-serial adapter (udev symlink, os/udev/90-cfb.rules).
+[sbd]
+device     = "/dev/iridium"
+min_signal = 2
+max_mo     = 340

@@ -20,7 +20,6 @@
 mod input;
 mod ota_exec;
 mod sim;
-mod transport;
 
 use cfb_core::arinc429::{Decoder, Ssm, Word};
 use cfb_core::edge::{AppPackage, DataView, EdgeRuntime, RuntimeEvent};
@@ -29,6 +28,12 @@ use cfb_core::frame::EPOCH_2020;
 use cfb_core::gnss::NmeaParser;
 use cfb_core::imu::{EngineVibDetector, ImuProcessor};
 use cfb_core::reference;
+use cfb_core::status::{self, Fault, Lights, StatusInputs};
+use cfb_drivers::led::{Indicator, SysfsLed};
+use cfb_drivers::link::{LinkDriver, Rx};
+use cfb_drivers::link_sbd::SbdLink;
+use cfb_drivers::link_udp::UdpBearer;
+use std::collections::BTreeSet;
 use cfb_core::*;
 use input::{Inputs, LineInputs};
 use std::path::Path;
@@ -203,17 +208,44 @@ fn main() {
     let app_dirs = apps_override.map(|d| vec![d]).unwrap_or_else(|| cfg.edge.app_dirs.clone());
     let mut edge = load_apps(&cfg, &gate, simulate, &app_dirs);
 
-    // Ground transport: one UDP socket per IP bearer (live mode only).
-    let mut bearers: Vec<transport::Bearer> = Vec::new();
-    if let (false, Some(tr)) = (simulate, &cfg.transport) {
-        let ground = tr.ground.parse().expect("validated");
-        for (k, b) in &tr.bearers {
-            match transport::Bearer::open(*k, b, ground) {
-                Ok(x) => bearers.push(x),
-                Err(e) => eprintln!("transport: bearer {k:?} ({}) not available: {e}", b.local),
+    // Link drivers (live mode only; the simulation acks immediately).
+    // Each bearer is a `LinkDriver`; adding a new kind of link means adding
+    // a driver in cfb-drivers and one registration here.
+    let mut bearers: Vec<Box<dyn LinkDriver>> = Vec::new();
+    if !simulate {
+        if let Some(tr) = &cfg.transport {
+            let ground = tr.ground.parse().expect("validated");
+            for (k, b) in &tr.bearers {
+                match UdpBearer::open(*k, b, ground) {
+                    Ok(x) => bearers.push(Box::new(x)),
+                    Err(e) => eprintln!("link: UDP bearer {k:?} ({}) not available: {e}", b.local),
+                }
+            }
+        }
+        if let Some(sbd) = &cfg.sbd {
+            match SbdLink::open_serial(&sbd.device, sbd.min_signal, sbd.max_mo) {
+                Ok(x) => bearers.push(Box::new(x)),
+                Err(e) => eprintln!("link: Iridium SBD on {} not available: {e}", sbd.device),
             }
         }
     }
+    for b in &bearers {
+        println!("link: {}", b.describe());
+    }
+
+    // Status lights and fault tracking (CFB-HLR-100).
+    let mut leds: Option<[SysfsLed; 3]> = match (&cfg.status_leds, simulate) {
+        (Some(l), false) => Some([SysfsLed::new(&l.green), SysfsLed::new(&l.amber), SysfsLed::new(&l.red)]),
+        _ => None,
+    };
+    let gnss_fault_after = cfg.status_leds.as_ref().map_or(30.0, |l| l.gnss_fault_after_s);
+    let mut faults: BTreeSet<Fault> = BTreeSet::new();
+    let mut last_lights: Option<Lights> = None;
+    let mut last_pos_valid_t = 0.0;
+    let switch_links: Vec<LinkKind> = cfg.rf_switch.as_ref().map(|s| s.links.clone()).unwrap_or_default();
+    let mut last_switch_off: Option<bool> = None;
+    let mut pfail_since: Option<f64> = None;
+    let mut powered_off = false;
     let retry_s = cfg.transport.as_ref().map_or(15, |t| t.retry_s);
 
     // OTA.
@@ -252,6 +284,7 @@ fn main() {
         if let Some(hw) = &s.hw {
             let det_ids: Vec<&str> = hw.iter().map(String::as_str).collect();
             for msg in m.check_detected(&det_ids) {
+                faults.insert(Fault::Module);
                 out.event(t, MsgType::Health, Priority::Normal, format!("MODULE {msg}"));
             }
         }
@@ -271,7 +304,7 @@ fn main() {
         let engine_vib = eng_vib.update(imu_sum.as_ref(), t);
 
         // ---- reference selection + cross-check
-        let r = reference::select(
+        let mut r = reference::select(
             &cfg.reference,
             t,
             arinc.as_ref(),
@@ -279,6 +312,9 @@ fn main() {
             s.engine_discrete,
             engine_vib,
         );
+        if m.baro {
+            reference::apply_baro(&mut r, s.baro_hpa);
+        }
         if r.pos_src != last_ref.pos_src || r.engine_src != last_ref.engine_src {
             out.event(t, MsgType::Health, Priority::Normal,
                 format!("REF position={:?} engine={:?}", r.pos_src, r.engine_src));
@@ -338,6 +374,8 @@ fn main() {
         dv.set("vs", r.vs_fpm.map(f64::from));
         dv.set("engine", r.engine_running.map(|e| if e { 1.0 } else { 0.0 }));
         dv.set("airborne", Some(if phase.is_confirmed_ground() { 0.0 } else { 1.0 }));
+        dv.set("baro_hpa", s.baro_hpa);
+        dv.set("baro_alt", s.baro_hpa.map(reference::pressure_altitude_ft));
         if let Some(sum) = imu_sum {
             dv.set("nz_max", Some(sum.nz_max as f64));
             dv.set("nz_min", Some(sum.nz_min as f64));
@@ -358,7 +396,10 @@ fn main() {
         }
         for e in edge_ev {
             let txt = match e {
-                RuntimeEvent::Disabled { app, reason } => format!("EDGE app {app} DISABLED: {reason}"),
+                RuntimeEvent::Disabled { app, reason } => {
+                    faults.insert(Fault::EdgeApp);
+                    format!("EDGE app {app} DISABLED: {reason}")
+                }
                 RuntimeEvent::Dropped { app, outputs, reason } => format!("EDGE app {app}: {outputs} output(s) dropped ({reason})"),
             };
             out.event(t, MsgType::Health, Priority::Normal, txt);
@@ -382,12 +423,51 @@ fn main() {
             println!("[{t:>6.0}s] queued flight data file (8 x 32 KiB) for ground upload");
         }
 
+        // ---- physical radio switch: unknown counts as OFF (fail restrictive)
+        let switch_off = cfg.rf_switch.is_some() && s.rf_switch != Some(true);
+        if last_switch_off != Some(switch_off) && cfg.rf_switch.is_some() {
+            out.event(t, MsgType::Health, Priority::Normal, format!("RF switch {}", if switch_off { "OFF" } else { "ON" }));
+            last_switch_off = Some(switch_off);
+        }
+        let perm: BTreeMap<LinkKind, bool> = [LinkKind::Wifi, LinkKind::Cellular, LinkKind::LeoSat, LinkKind::Iridium]
+            .into_iter()
+            .map(|k| (k, lm.tx_permitted(k, phase) && !(switch_off && switch_links.contains(&k))))
+            .collect();
+        let permitted = |kind: LinkKind| perm.get(&kind).copied().unwrap_or(false);
+
+        // ---- power fail: snapshot at once, clean shutdown if it persists
+        if s.power_fail {
+            let since = *pfail_since.get_or_insert_with(|| {
+                faults.insert(Fault::Power);
+                if !simulate {
+                    let _ = out.queue.save(&snapshot);
+                }
+                t
+            });
+            if since == t {
+                out.event(t, MsgType::Health, Priority::High, "POWER FAIL".into());
+            }
+            if !powered_off && t - since >= cfg.power.shutdown_after_s {
+                powered_off = true;
+                println!("[{t:>6.0}s] power fail for {:.0} s: final snapshot, shutting down", t - since);
+                if !simulate {
+                    let _ = out.queue.save(&snapshot);
+                    let c = &cfg.power.off_cmd;
+                    let _ = std::process::Command::new(&c[0]).args(&c[1..]).spawn();
+                }
+            }
+        } else if pfail_since.take().is_some() {
+            faults.remove(&Fault::Power);
+            powered_off = false;
+            out.event(t, MsgType::Health, Priority::Normal, "POWER RESTORED".into());
+        }
+
         // ---- radio enables (software layer of the RF inhibit)
         for kind in [LinkKind::Wifi, LinkKind::Cellular, LinkKind::LeoSat, LinkKind::Iridium] {
             if !m.has_link(kind) {
                 continue;
             }
-            let en = lm.tx_permitted(kind, phase);
+            let en = permitted(kind);
             let changed = rf_enabled.get(&kind) != Some(&en);
             if changed {
                 println!("[{t:>6.0}s] RF {kind:?}: {}", if en { "ENABLED" } else { "inhibited" });
@@ -405,7 +485,10 @@ fn main() {
                         .spawn()
                     {
                         Ok(ch) => rf_children.push((kind, en, ch)),
-                        Err(e) => out.event(t, MsgType::Health, Priority::Normal, format!("RF {kind:?} command failed to start: {e}")),
+                        Err(e) => {
+                            faults.insert(Fault::RfCommand);
+                            out.event(t, MsgType::Health, Priority::Normal, format!("RF {kind:?} command failed to start: {e}"))
+                        }
                     }
                     rf_last_cmd.insert(kind, t);
                 }
@@ -414,9 +497,14 @@ fn main() {
         let mut still = Vec::new();
         for (kind, en, mut ch) in rf_children.drain(..) {
             match ch.try_wait() {
-                Ok(Some(st)) if !st.success() => out.event(t, MsgType::Health, Priority::Normal,
-                    format!("RF {kind:?} {} command failed: {st}", if en { "on" } else { "off" })),
-                Ok(Some(_)) => {}
+                Ok(Some(st)) if !st.success() => {
+                    faults.insert(Fault::RfCommand);
+                    out.event(t, MsgType::Health, Priority::Normal,
+                        format!("RF {kind:?} {} command failed: {st}", if en { "on" } else { "off" }))
+                }
+                Ok(Some(_)) => {
+                    faults.remove(&Fault::RfCommand);
+                }
                 Ok(None) => still.push((kind, en, ch)),
                 Err(e) => eprintln!("RF {kind:?}: {e}"),
             }
@@ -451,12 +539,12 @@ fn main() {
         for b in bearers.iter_mut() {
             for rx in b.poll(t) {
                 match rx {
-                    transport::Rx::Acked(id) => {
+                    Rx::Acked(id) => {
                         out.queue.ack(id);
                     }
-                    transport::Rx::Uplink(f) => {
+                    Rx::Uplink(f) => {
                         let txt = String::from_utf8_lossy(&f.payload).into_owned();
-                        println!("[{t:>6.0}s] UPLINK via {:?} {:?}: {txt}", b.kind, f.msg_type);
+                        println!("[{t:>6.0}s] UPLINK via {:?} {:?}: {txt}", b.kind(), f.msg_type);
                         if f.msg_type == MsgType::Text && txt.starts_with("OTA AVAILABLE") {
                             ota.announce();
                         }
@@ -469,21 +557,27 @@ fn main() {
             ota.announce();
         }
 
-        // ---- link status: from the bearers when the transport runs here
-        let status: Vec<LinkStatus> = if bearers.is_empty() {
+        // ---- link status: from the link drivers when they run here.
+        // Links behind a switched-off radio switch count as down.
+        let mut status: Vec<LinkStatus> = if bearers.is_empty() {
             s.links.values().copied().filter(|l| m.has_link(l.kind)).collect()
         } else {
             bearers.iter().map(|b| b.status(t)).collect()
         };
+        for l in status.iter_mut() {
+            if switch_off && switch_links.contains(&l.kind) {
+                l.up = false;
+            }
+        }
 
         // ---- drain the queue onto links
         let now_u = t as u64;
         out.queue.expire(now_u);
-        let mut budget: BTreeMap<LinkKind, usize> = bearers.iter().map(|b| (b.kind, b.tick_budget())).collect();
+        let mut budget: BTreeMap<LinkKind, usize> = bearers.iter().map(|b| (b.kind(), b.tick_budget())).collect();
         while let Some(msg) = out.queue.peek_ready(|p| lm.can_carry(phase, p, &status), now_u, retry_s) {
             let Some(kind) = lm.select(phase, msg.priority, msg.payload.len(), &status) else { break };
             let (id, len) = (msg.id, msg.payload.len());
-            if let Some(b) = bearers.iter_mut().find(|b| b.kind == kind) {
+            if let Some(b) = bearers.iter_mut().find(|b| b.kind() == kind) {
                 let left = budget.get_mut(&kind).expect("bearer budget");
                 if *left == 0 {
                     break; // this second's capacity is used; continue next tick
@@ -491,7 +585,15 @@ fn main() {
                 *left = left.saturating_sub(len);
                 let frame = msg.payload.clone();
                 if let Err(e) = b.send(&frame, id, t) {
-                    eprintln!("transport {kind:?}: {e}");
+                    if e.kind() == std::io::ErrorKind::InvalidInput {
+                        // This link can't carry this message (e.g. too big for
+                        // SBD): park it for retry_s so it can't block the queue.
+                        out.queue.mark_sent(id, now_u);
+                        continue;
+                    }
+                    if e.kind() != std::io::ErrorKind::WouldBlock {
+                        eprintln!("link {kind:?}: {e}");
+                    }
                     break;
                 }
                 out.queue.mark_sent(id, now_u); // removed when the ground acks
@@ -505,9 +607,43 @@ fn main() {
             e.1 += len as u64;
         }
         for b in bearers.iter_mut() {
-            if lm.tx_permitted(b.kind, phase) {
-                b.maybe_keepalive(t, out.seq);
+            if permitted(b.kind()) {
+                b.maintain(t, out.seq);
                 out.seq = out.seq.wrapping_add(1);
+            }
+        }
+
+        // ---- faults and status lights
+        if r.pos.is_some() || !m.gnss {
+            last_pos_valid_t = t;
+        }
+        if t - last_pos_valid_t > gnss_fault_after {
+            faults.insert(Fault::Gnss);
+        } else {
+            faults.remove(&Fault::Gnss);
+        }
+        if out.queue.bytes() * 10 > cfg.queue.max_bytes * 9 {
+            faults.insert(Fault::QueueFull);
+        } else {
+            faults.remove(&Fault::QueueFull);
+        }
+        let radios_allowed = [LinkKind::Wifi, LinkKind::Cellular].iter().any(|k| m.has_link(*k) && permitted(*k));
+        let lights = status::lights(&StatusInputs {
+            phase,
+            radios_allowed,
+            rf_switch_off: switch_off,
+            link_up: status.iter().any(|l| l.up),
+            faults: &faults,
+        });
+        if last_lights != Some(lights) {
+            println!("[{t:>6.0}s] LIGHTS green={:?} amber={:?} red={:?} faults={:?}", lights.green, lights.amber, lights.red, faults);
+            last_lights = Some(lights);
+        }
+        if let Some(l) = leds.as_mut() {
+            for (led, light) in l.iter_mut().zip([lights.green, lights.amber, lights.red]) {
+                if let Err(e) = led.set(light.level(t)) {
+                    eprintln!("led: {e}");
+                }
             }
         }
 
@@ -592,6 +728,9 @@ fn main() {
     }
     for (k, (n, b)) in &sent {
         println!("{k:?}: {n} frames, {b} bytes");
+    }
+    for b in &bearers {
+        println!("link: {}", b.describe());
     }
     for (id, ver, en) in edge.apps() {
         println!("edge app {id} {ver}: {}", if en { "running" } else { "DISABLED" });

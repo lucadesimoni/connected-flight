@@ -1,0 +1,17 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+# Append to /boot/firmware/config.txt on the portable unit.
+
+# Sensors (os/dt/cfb-portable-overlay.dts)
+dtparam=i2c_arm=on
+dtoverlay=cfb-portable
+
+# Status LEDs as Linux LED-class devices (GPIO numbers are examples:
+# change them to your wiring; LED + resistor to GND, active high).
+dtoverlay=gpio-led,gpio=5,label=cfb-green
+dtoverlay=gpio-led,gpio=6,label=cfb-amber
+dtoverlay=gpio-led,gpio=13,label=cfb-red
+
+# USB current: needed for modem + GNSS + IMU unless a 5 V / 5 A supply
+# is used. Check your power budget (docs/11) before enabling.
+#usb_max_current_enable=1

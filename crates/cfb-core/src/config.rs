@@ -46,6 +46,71 @@ pub struct Config {
     /// Commands that switch each radio on/off (software RF inhibit).
     #[serde(default)]
     pub rf: BTreeMap<LinkKind, RfCommands>,
+    /// Physical radio switch (portable unit): links behind it.
+    #[serde(default)]
+    pub rf_switch: Option<RfSwitchConfig>,
+    #[serde(default)]
+    pub power: PowerConfig,
+    /// Status lights (sysfs LED class paths).
+    #[serde(default)]
+    pub status_leds: Option<StatusLedConfig>,
+    /// Iridium SBD modem (non-IP). Mutually exclusive with an IP bearer
+    /// for `iridium` in `[transport]`.
+    #[serde(default)]
+    pub sbd: Option<SbdConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RfSwitchConfig {
+    /// Links whose hardware the switch powers (e.g. ["cellular"]).
+    pub links: Vec<LinkKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PowerConfig {
+    /// After the power-fail input has been active this long: final queue
+    /// snapshot and `off_cmd`.
+    pub shutdown_after_s: f64,
+    pub off_cmd: Vec<String>,
+}
+
+impl Default for PowerConfig {
+    fn default() -> Self {
+        Self { shutdown_after_s: 5.0, off_cmd: vec!["systemctl".into(), "poweroff".into()] }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusLedConfig {
+    pub green: String,
+    pub amber: String,
+    pub red: String,
+    /// Seconds without a valid GNSS position before the GNSS fault shows.
+    #[serde(default = "thirty")]
+    pub gnss_fault_after_s: f64,
+}
+
+fn thirty() -> f64 {
+    30.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SbdConfig {
+    /// Serial device of the 9602/9603 modem (19200 8N1).
+    pub device: String,
+    /// Minimum signal bars (0..5) to start a session.
+    #[serde(default = "two")]
+    pub min_signal: u8,
+    /// Message size limit (340 for 9602/9603).
+    #[serde(default = "mo_max")]
+    pub max_mo: usize,
+}
+
+fn two() -> u8 {
+    2
+}
+fn mo_max() -> usize {
+    340
 }
 
 /// Radio on/off commands, run by cfbd when `LinkManager::tx_permitted`
@@ -218,6 +283,27 @@ impl Config {
                 b.local.parse::<std::net::SocketAddr>().map_err(|_| ConfigError(format!("bearer {k:?}: bad local address")))?;
             }
         }
+        if let Some(sw) = &self.rf_switch {
+            for k in &sw.links {
+                if !self.modules.has_link(*k) {
+                    return Err(ConfigError(format!("rf_switch: {k:?} not fitted")));
+                }
+            }
+        }
+        if let Some(sbd) = &self.sbd {
+            if !self.modules.has_link(LinkKind::Iridium) {
+                return Err(ConfigError("sbd configured but no iridium satcom module".into()));
+            }
+            if self.transport.as_ref().is_some_and(|t| t.bearers.contains_key(&LinkKind::Iridium)) {
+                return Err(ConfigError("iridium: use either [sbd] or an IP bearer, not both".into()));
+            }
+            if !(20..=340).contains(&sbd.max_mo) || sbd.min_signal > 5 {
+                return Err(ConfigError("sbd: max_mo 20..340, min_signal 0..5".into()));
+            }
+        }
+        if self.power.off_cmd.is_empty() {
+            return Err(ConfigError("power.off_cmd must not be empty".into()));
+        }
         for (k, c) in &self.rf {
             if !self.modules.has_link(*k) {
                 return Err(ConfigError(format!("rf commands for {k:?} without its module")));
@@ -321,6 +407,23 @@ mod tests {
         assert!(c.rf.contains_key(&LinkKind::Cellular) && c.rf.contains_key(&LinkKind::Wifi));
         assert_eq!(c.transport.unwrap().bearers.len(), 2);
         assert!(c.modules.satcom.is_empty() && c.modules.arinc429.is_none());
+    }
+
+    const PORTABLE: &str = include_str!("../../../config/cfb-portable-pi5.toml");
+
+    #[test]
+    fn portable_kit_config_parses() {
+        let c = Config::from_toml(PORTABLE).unwrap();
+        assert!(c.modules.imu && c.modules.baro);
+        assert_eq!(c.rf_switch.unwrap().links, vec![LinkKind::Cellular]);
+        assert!(c.status_leds.is_some());
+        assert_eq!(c.sbd.unwrap().max_mo, 340);
+    }
+
+    #[test]
+    fn sbd_without_iridium_module_rejected() {
+        let bad = PORTABLE.replace("satcom   = [\"iridium\"]", "satcom   = []").replace("[links.iridium]\nenabled             = true", "[links.iridium]\nenabled             = false");
+        assert!(Config::from_toml(&bad).unwrap_err().0.contains("sbd"));
     }
 
     #[test]

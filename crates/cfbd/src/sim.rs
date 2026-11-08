@@ -156,6 +156,7 @@ impl Inputs for SimInputs {
             imu,
             links,
             hw: (t == 0).then(|| self.hw.clone()),
+            ..Default::default()
         })
     }
 }

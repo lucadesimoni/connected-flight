@@ -28,11 +28,12 @@
 use cfb_core::config::BearerConfig;
 use cfb_core::frame::{decode_ack, frame_seq, Frame, MsgType};
 use cfb_core::{LinkKind, LinkStatus};
+use crate::link::{LinkDriver, Rx};
 use std::collections::HashMap;
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 
-pub struct Bearer {
+pub struct UdpBearer {
     pub kind: LinkKind,
     sock: UdpSocket,
     ground: SocketAddr,
@@ -47,11 +48,6 @@ pub struct Bearer {
     pub rx_frames: u64,
 }
 
-pub enum Rx {
-    Acked(u64),
-    Uplink(Frame),
-}
-
 fn iface_up(iface: &Option<String>) -> bool {
     match iface {
         None => true,
@@ -62,7 +58,7 @@ fn iface_up(iface: &Option<String>) -> bool {
     }
 }
 
-impl Bearer {
+impl UdpBearer {
     pub fn open(kind: LinkKind, cfg: &BearerConfig, ground: SocketAddr) -> io::Result<Self> {
         let local: SocketAddr = cfg.local.parse().map_err(|_| io::Error::other("bad local address"))?;
         let sock = UdpSocket::bind(local)?;
@@ -90,7 +86,7 @@ impl Bearer {
         }
     }
 
-    pub fn status(&self, t: f64) -> LinkStatus {
+    fn link_status(&self, t: f64) -> LinkStatus {
         LinkStatus { kind: self.kind, up: self.alive(t) && iface_up(&self.cfg.iface), est_bps: self.cfg.nominal_bps }
     }
 
@@ -101,11 +97,11 @@ impl Bearer {
     }
 
     /// Bytes this bearer may send in one 1-second tick.
-    pub fn tick_budget(&self) -> usize {
+    fn budget(&self) -> usize {
         (self.cfg.nominal_bps as usize / 8).max(64)
     }
 
-    pub fn send(&mut self, frame: &[u8], msg_id: u64, t: f64) -> io::Result<()> {
+    fn send_frame(&mut self, frame: &[u8], msg_id: u64, t: f64) -> io::Result<()> {
         self.sock.send_to(frame, self.ground)?;
         if let Some(seq) = frame_seq(frame) {
             self.inflight.insert(seq, msg_id);
@@ -115,7 +111,7 @@ impl Bearer {
     }
 
     /// Keepalive / probe. Also how a bearer that is down finds out it is back.
-    pub fn maybe_keepalive(&mut self, t: f64, seq: u16) {
+    fn keepalive(&mut self, t: f64, seq: u16) {
         let every = match (self.alive(t), self.cfg.keepalive_s) {
             (true, 0) => return,                 // metered and fine: no idle traffic
             (true, k) => k as f64,
@@ -133,7 +129,7 @@ impl Bearer {
     }
 
     /// Drain received datagrams.
-    pub fn poll(&mut self, t: f64) -> Vec<Rx> {
+    fn receive(&mut self, t: f64) -> Vec<Rx> {
         let mut out = Vec::new();
         let mut buf = [0u8; 2048];
         while let Ok((n, from)) = self.sock.recv_from(&mut buf) {
@@ -158,6 +154,30 @@ impl Bearer {
     }
 }
 
+impl LinkDriver for UdpBearer {
+    fn kind(&self) -> LinkKind {
+        self.kind
+    }
+    fn status(&self, t: f64) -> LinkStatus {
+        self.link_status(t)
+    }
+    fn tick_budget(&self) -> usize {
+        self.budget()
+    }
+    fn send(&mut self, frame: &[u8], msg_id: u64, t: f64) -> io::Result<()> {
+        self.send_frame(frame, msg_id, t)
+    }
+    fn poll(&mut self, t: f64) -> Vec<Rx> {
+        self.receive(t)
+    }
+    fn maintain(&mut self, t: f64, seq: u16) {
+        self.keepalive(t, seq)
+    }
+    fn describe(&self) -> String {
+        format!("{:?} udp {} tx={}B rx={} frames", self.kind, self.cfg.local, self.tx_bytes, self.rx_frames)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,7 +190,7 @@ mod tests {
     #[test]
     fn send_ack_and_uplink_roundtrip() {
         let ground = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let mut b = Bearer::open(LinkKind::LeoSat, &cfg(), ground.local_addr().unwrap()).unwrap();
+        let mut b = UdpBearer::open(LinkKind::LeoSat, &cfg(), ground.local_addr().unwrap()).unwrap();
         assert!(!b.status(0.0).up, "down until the ground answers");
 
         let f = Frame { msg_type: MsgType::Position, seq: 42, time: 0, payload: vec![1; 17] };
@@ -202,16 +222,16 @@ mod tests {
     fn metered_bearer_optimistic_until_unanswered() {
         let ground = UdpSocket::bind("127.0.0.1:0").unwrap();
         let c = BearerConfig { keepalive_s: 0, down_after_s: 30, ..cfg() };
-        let mut b = Bearer::open(LinkKind::Iridium, &c, ground.local_addr().unwrap()).unwrap();
+        let mut b = UdpBearer::open(LinkKind::Iridium, &c, ground.local_addr().unwrap()).unwrap();
         assert!(b.status(0.0).up, "metered: up until proven otherwise");
-        b.maybe_keepalive(100.0, 1);
+        b.maintain(100.0, 1);
         assert_eq!(b.tx_bytes, 0, "no idle keepalive on metered link");
         let f = Frame { msg_type: MsgType::Position, seq: 5, time: 0, payload: vec![0; 17] };
         b.send(&f.encode(), 1, 100.0).unwrap();
         assert!(b.status(120.0).up);
         assert!(!b.status(131.0).up, "unanswered > 30 s");
         let before = b.tx_bytes;
-        b.maybe_keepalive(161.0, 2);
+        b.maintain(161.0, 2);
         assert!(b.tx_bytes > before, "sparse probe while down");
     }
 
@@ -219,7 +239,7 @@ mod tests {
     fn foreign_sender_ignored() {
         let ground = UdpSocket::bind("127.0.0.1:0").unwrap();
         let stranger = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let mut b = Bearer::open(LinkKind::Cellular, &cfg(), ground.local_addr().unwrap()).unwrap();
+        let mut b = UdpBearer::open(LinkKind::Cellular, &cfg(), ground.local_addr().unwrap()).unwrap();
         let addr = b.sock.local_addr().unwrap();
         let f = Frame { msg_type: MsgType::Text, seq: 1, time: 0, payload: b"hi".to_vec() };
         stranger.send_to(&f.encode(), addr).unwrap();

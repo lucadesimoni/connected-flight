@@ -68,12 +68,32 @@ Record each result (pass/fail, notes, date, software commit).
 | T15 | OTA download + verify | Generate a test ASCI/manifest/bundle signed with your key into `/srv/cfb/CFB-HW-BENCH/`; run `cfb-ground --announce-ota` once | Box logs `OTA Downloading` → `Verified`; a tampered bundle → `Failed: verification`. *Install needs a RAUC A/B image; on stock Raspberry Pi OS stop at Verified.* |
 | T16 | Data usage | `vnstat` or modem counters for 1 h idle on 4G | Note bytes/h (WireGuard keepalive 25 s + cfbd keepalive 30 s) |
 
+### 3.1 Portable kit additions (config `config/cfb-portable-pi5.toml`)
+
+Hardware set-up: wire the sensors and LEDs, append
+`os/dt/config.txt.snippet` to `/boot/firmware/config.txt` (the installer
+builds the overlay), reboot, check `cat /sys/bus/iio/devices/*/name`.
+In `/etc/cfb/io.env`: `CFB_IMU_IIO=ism330dhcx`, `CFB_BARO_IIO=bmp`,
+`CFB_HW=base,gnss,imu,baro,wifi,cellular_4g`, and the `CFB_GPIO` lines for
+`rfsw` / `pfail`.
+
+| # | Test | Steps | Expected |
+|---|---|---|---|
+| T17 | IMU live | `cfb-io --imu-iio ism330dhcx` alone | `imu=` token with ~100 samples per line; flat on a table: z ≈ −1 g (axes per mounting) |
+| T18 | Engine from vibration | Unit on a running engine / vibrating surface (eng discrete `-`) | `REF … engine=OwnImu`; engine on after ~5 s, off ~10 s after stopping |
+| T19 | Radio switch | Toggle the switch OFF / ON | `RF switch OFF`, 4G inhibited (`nmcli radio` / modem power), amber LED; ON → 4G back. Disconnect the switch sense wire → treated as OFF |
+| T20 | Power fail | Pull the UPS input power | `POWER FAIL`, red LED, queue snapshot; after 5 s clean power-off; on restore before 5 s: `POWER RESTORED`, no shutdown |
+| T21 | Barometer | Compare reported altitude with the airfield elevation and QNH | Within the QNH difference (altitude is pressure altitude, standard setting) |
+| T22 | Status lights | Walk through: start-up, ground + link, switch OFF, GNSS unplugged (30 s) | Matches the table in `cfb-core/src/status.rs` |
+| T23 | Iridium SBD | Modem with sky view, `[sbd]` configured; `wow=0` in the discretes file (airborne) | Position reports leave every interval via SBD (provider portal shows messages, ~2 frames per message); `cfb-ground --decode-sbd <hex>` decodes them |
+| T24 | SBD bad conditions | Cover the antenna | Signal < 2: frames held, no credits used; uncovered: they go out |
+
 ## 4. Known limits of the bench unit
 
 * No hardware weight-on-wheels interlock: RF inhibit is software
   (NetworkManager), checked by T11–T13.
-* No IMU: engine state comes from the discretes file; no hard-landing or
-  turbulence detection.
+* Bench build without IMU: engine state comes from the discretes file (the
+  portable kit config adds the IMU and barometer).
 * No RAUC A/B image yet: OTA stops after verification.
 * Not environmentally tested, no approval: **not an aircraft installation**.
 

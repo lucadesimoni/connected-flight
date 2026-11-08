@@ -67,11 +67,15 @@ installed as a **minor change** with **DAL D field-loadable software**.
 | [09 Ownership & commercialisation](docs/09-ownership-and-commercialisation.md) | IP protection, employment check, trademarks, business models, company setup |
 | [10 Bench & portable test](docs/10-bench-and-portable-test.md) | Pi 5 + Wi-Fi + 4G + WireGuard setup, 16 tests, rules for carrying it as a portable device |
 | [11 Hardware components](docs/11-hardware-components.md) | Parts for the portable unit and the integrated (certifiable) unit, power, cost, sequence |
+| [12 Architecture & long-term support](docs/12-architecture-and-extension.md) | Layers, extension points, compatibility rules, quality gates, release/support model |
 
 ## Repository layout
 
 ```
-crates/cfb-core   arinc429, gnss, imu, reference, modules, phase, link, queue, frame, update, config
+crates/cfb-core   decisions, no I/O: arinc429, gnss, imu, reference, modules, phase, link, queue,
+                  frame, edge, ota, update, status, sbd, datalog, config
+crates/cfb-drivers  hardware/network I/O: LinkDriver trait (UDP/WireGuard, Iridium SBD),
+                  IIO accelerometer/barometer, NMEA serial, discretes, LEDs
 crates/cfbd       daemon (1 Hz loop), transport, OTA executor, simulator;
                   bins: cfb-release (signing), cfb-ground (reference ground service),
                         cfb-replay (edge apps over existing flight logs, on the ground),
@@ -84,7 +88,8 @@ config/cfb.toml          full build: ARINC + GNSS/IMU + Wi-Fi + 5G + Iridium
 config/cfb-minimal.toml  ground build: GNSS/IMU + Wi-Fi + 4G, no ARINC, no satcom
 config/cfb-pc12-example.toml  PC-12-class: ARINC + 5G + Starlink + Iridium, transport, OTA, edge
 config/apps/             example edge app package (turboprop ops)
-config/cfb-bench-pi5.toml  bench / portable Pi 5: GNSS + Wi-Fi + 4G, WireGuard, RF inhibit
+config/cfb-bench-pi5.toml  bench Pi 5: GNSS + Wi-Fi + 4G, WireGuard, RF inhibit
+config/cfb-portable-pi5.toml  portable kit: + IMU, barometer, radio switch, LEDs, power-fail, Iridium SBD
 os/rauc           RAUC A/B slot configuration
 os/systemd        hardened service units, watchdog, mark-good
 docs/             engineering and certification documents
@@ -93,7 +98,7 @@ docs/             engineering and certification documents
 ## Build and run
 
 ```sh
-cargo test                                    # 99 HLR-traced tests
+cargo test                                    # 118 HLR-traced tests
 cargo run --release --bin cfbd -- --config config/cfb.toml --simulate
 cargo run --release --bin cfbd -- --config config/cfb.toml --simulate --hard-landing
 cargo run --release --bin cfbd -- --config config/cfb-minimal.toml --simulate
@@ -169,7 +174,8 @@ cfb-release verify <pubkey-hex> manifest.toml
 | Edge app runtime + rule packages (exceedance, trend, summary) | Done, unit-tested |
 | OTA state machine + executor (curl, verify, rauc, deferred reboot) | Done; tested in simulation; real RAUC/curl on target to do |
 | Bench networking: WireGuard per bearer, policy routing, NetworkManager, RF inhibit commands, cfb-io, installers | Done; chain tested on localhost; **on a real Pi 5: to test (docs/10)** |
-| Production ground service (database, dedup, users), RAUC A/B image | **To do** |
+| Portable kit software: IMU + barometer (IIO), radio switch, power-fail shutdown, status LEDs, Iridium SBD driver, device-tree/udev files | Done; tested with fake sensors/modem; **on hardware: docs/10 T17–T24** |
+| Production ground service (database, dedup, users, SBD webhook), RAUC A/B image | **To do** |
 | Starlink terminal installation approval per type | **To do** (outside the box) |
 | Yocto/Buildroot image, secure boot, dm-verity | **To do** (RAUC + units provided) |
 | Carrier board, enclosure, DO-160G tests | **To do** |

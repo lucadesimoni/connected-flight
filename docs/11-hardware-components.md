@@ -28,19 +28,19 @@ rough orders of magnitude for planning, not quotes.
 | Real-time clock | Official RTC battery for the Pi 5 | Correct time before GNSS fix | ✅ (OS) |
 | GNSS | **u-blox M9 / M10 receiver on USB** (e.g. NEO-M9N / MAX-M10S boards), or **ZED-F9P** for dual-frequency | Fast fix, multi-constellation, shows up as `/dev/ttyACM0` | ✅ `cfb-io` |
 | GNSS antenna | Active patch antenna with cable, mounted on the glare shield (window view), or a suction mount | A cockpit roof blocks a lot; the antenna position matters more than the receiver | – |
-| Accelerometer (IMU) | **ST ISM330DHCX** (industrial, ±16 g) breakout on I²C/SPI | Engine-on from vibration, touchdown Nz, turbulence | ⚠️ needs an IMU reader in `cfb-io` (Linux IIO driver `st_lsm6dsx` covers this chip) |
-| Barometer (optional) | **Bosch BMP390** or MS5611 breakout | Cabin pressure altitude (≈ static in unpressurised aircraft): better climb/descent detection | ⚠️ not used by the software yet |
+| Accelerometer (IMU) | **ST ISM330DHCX** (industrial, ±16 g) breakout on I²C/SPI | Engine-on from vibration, touchdown Nz, turbulence | ✅ IIO reader (`cfb-drivers::iio`), overlay `os/dt/` |
+| Barometer (optional) | **Bosch BMP390** or MS5611 breakout | Cabin pressure altitude (≈ static in unpressurised aircraft) | ✅ altitude source when no aircraft data (`reference::apply_baro`) |
 | 4G modem | **Quectel EG25-G** (LTE Cat 4, global bands) in a **USB enclosure**, QMI/MBIM mode | Controllable by ModemManager (radio on/off works); good band coverage in Europe | ✅ |
 | 5G alternative | Quectel RM520N-GL in a USB 3 enclosure | Faster uploads, but 2–3× the power and heat | ✅ |
 | 4G antennas | 2 × LTE antennas (main + diversity), on short cables | Diversity matters at the edge of airfield coverage | – |
 | Wi-Fi | Pi 5 onboard; optionally a **USB Wi-Fi adapter with an external antenna** (mainline-supported chipset, e.g. MediaTek mt76) | The aircraft's metal fuselage and hangar shield the small onboard antenna | ✅ |
-| **Physical radio switch** | Switched USB hub (per-port power switch) or a toggle in the modem's USB power line | Hardware "radio off" for the PIC, while there is no WoW interlock. **Strongly recommended** | ⚠️ add a switch-state input to `cfb-io` |
-| Status indicator | 3 LEDs (green: ground, radios may be on; amber: airborne, radios off; red: fault) or a small e-paper display | The pilot must be able to see what the box is doing | ⚠️ needs an LED output in `cfbd` |
-| Satcom (option) | **Iridium 9603 SBD** module (e.g. RockBLOCK 9603) with a small patch antenna | Position reports in flight, global, ~a few W peak | ⚠️ needs an SBD driver (non-IP; the IP transport doesn't cover it) |
+| **Physical radio switch** | Switched USB hub (per-port power switch) or a toggle in the modem's USB power line; a second contact to a GPIO tells the software | Hardware "radio off" for the PIC, while there is no WoW interlock. **Strongly recommended** | ✅ `rfsw` input; links behind it inhibited, unknown = OFF |
+| Status indicator | 3 LEDs (green/amber/red) via `gpio-led` overlays | The pilot must be able to see what the box is doing | ✅ `cfb-core::status` + `cfb-drivers::led` |
+| Satcom (option) | **Iridium 9603 SBD** module (e.g. RockBLOCK 9603) with a small patch antenna | Position reports in flight, global, ~a few W peak | ✅ SBD driver (`cfb-drivers::link_sbd`); ground decode `cfb-ground --decode-sbd` |
 | ~~Starlink Mini~~ | – | **Not for in-flight use:** Starlink requires an aviation terminal with an approved installation. On the ground it works as a "Wi-Fi" source | – |
 | Power, option 1 | **12/24 V → 5.1 V / 5 A USB-C PD converter** from the aircraft's accessory socket (where one is fitted) | The Pi 5 only gives 1.6 A total to USB at 5 A input; with 3 A it limits USB to 600 mA, too little for modem + GNSS | ✅ |
 | Power, option 2 | USB-C PD power bank that supplies **5 V / 5 A**, or 5 V / 3 A with `usb_max_current_enable=1` and a checked power budget | Independent of the aircraft | ✅ |
-| Clean shutdown | Supercapacitor UPS HAT (no extra lithium cells) | Power loss → queue snapshot and clean shutdown | ⚠️ add a power-fail input to `cfb-io` |
+| Clean shutdown | Supercapacitor UPS HAT (no extra lithium cells) with a power-fail output to a GPIO | Power loss → queue snapshot and clean shutdown | ✅ `pfail` input → snapshot, power-off after 5 s |
 | Enclosure | Small aluminium case with heatsink fins, strap / Velcro mount; keep away from the magnetic compass | The cockpit in sun gets well above 50 °C; the Pi throttles | – |
 
 ### A.2 Power budget (portable, estimated)
@@ -71,13 +71,12 @@ cabin. Private GA flights: secure it, and keep it cool.
 | **Portable unit without satcom** | **≈ 500–950** |
 | Iridium 9603 kit + antenna + airtime | + 250–350 + monthly |
 
-### A.4 Software work for the full portable kit
+### A.4 Software for the full portable kit: done
 
-1. IMU input in `cfb-io` (IIO, 100 Hz samples on the `imu=` token).
-2. Status LED output (phase, radios on/off, fault) from `cfbd`.
-3. Physical radio switch and power-fail inputs in `cfb-io`.
-4. Barometric altitude as an additional phase cue (optional).
-5. Iridium SBD driver (optional): compact frames fit into 340-byte SBD messages.
+All items are implemented and tested (fakes for sensors and modem); see
+`config/cfb-portable-pi5.toml`, `os/dt/`, `os/udev/` and tests T17–T24 in
+`docs/10`. Still open: reading Iridium uplink (MT) messages, and using the
+barometer as a phase cue (today it is an altitude source).
 
 ---
 

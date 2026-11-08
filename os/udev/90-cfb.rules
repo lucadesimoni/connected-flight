@@ -1,0 +1,9 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+# /etc/udev/rules.d/90-cfb.rules
+# Status LEDs: writable by the cfb service user.
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="cfb-*", RUN+="/bin/chgrp cfb /sys%p/brightness", RUN+="/bin/chmod g+w /sys%p/brightness"
+# IIO sensors: let cfb-io set the sampling rate.
+ACTION=="add", SUBSYSTEM=="iio", RUN+="/bin/sh -c 'chgrp cfb /sys%p/in_accel_sampling_frequency 2>/dev/null; chmod g+w /sys%p/in_accel_sampling_frequency 2>/dev/null; true'"
+# Stable name for the Iridium modem's USB-serial adapter (adjust idVendor/idProduct).
+#SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", SYMLINK+="iridium", GROUP="dialout", MODE="0660"

@@ -11,7 +11,12 @@ set -eu
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 [ -x target/release/cfbd ] || { echo "build first: cargo build --release" >&2; exit 1; }
 
-apt-get install -y network-manager modemmanager wireguard-tools gpiod curl
+apt-get install -y network-manager modemmanager wireguard-tools gpiod curl device-tree-compiler
+
+# Sensor overlay (portable kit); enable it in config.txt (os/dt/config.txt.snippet)
+if [ -d /boot/firmware/overlays ]; then
+  dtc -@ -I dts -O dtb -o /boot/firmware/overlays/cfb-portable.dtbo os/dt/cfb-portable-overlay.dts
+fi
 
 id cfb >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin cfb
 getent group gpio >/dev/null || groupadd --system gpio
@@ -26,6 +31,8 @@ install -m 644 os/systemd/cfb.tmpfiles.conf /etc/tmpfiles.d/cfb.conf
 install -m 644 os/systemd/cfbd.service os/systemd/cfb-mark-good.service /etc/systemd/system/
 install -d -m 755 /etc/polkit-1/rules.d
 install -m 644 os/polkit/50-cfb.rules /etc/polkit-1/rules.d/
+install -m 644 os/udev/90-cfb.rules /etc/udev/rules.d/
+udevadm control --reload || true
 systemd-tmpfiles --create /etc/tmpfiles.d/cfb.conf
 systemctl daemon-reload
 

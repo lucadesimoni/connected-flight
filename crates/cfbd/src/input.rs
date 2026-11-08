@@ -5,6 +5,9 @@
 //!
 //! ```text
 //! t=<mono s> wow=<0|1|-> eng=<0|1|-> v=<volts|-> maint=<0|1>
+//! rfsw=<0|1|->                           physical radio switch (0 = OFF)
+//! pfail=<0|1|->                          power failing
+//! baro=<hPa>                             own barometer
 //! a429=<ch>:<hex>,<ch>:<hex>,...        ARINC 429 words received this second
 //! nmea=<sentence>                        repeatable, own GNSS
 //! imu=<ax>,<ay>,<az>;<ax>,<ay>,<az>;...  raw accelerometer samples (g, sensor axes)
@@ -26,6 +29,9 @@ pub struct Sample {
     pub engine_discrete: Option<bool>,
     pub supply_v: Option<f32>,
     pub maintenance: bool,
+    pub rf_switch: Option<bool>,
+    pub power_fail: bool,
+    pub baro_hpa: Option<f64>,
     pub a429: Vec<(u8, u32)>,
     pub nmea: Vec<String>,
     pub imu: Vec<[f32; 3]>,
@@ -66,6 +72,9 @@ pub fn parse_line(line: &str, links: &mut BTreeMap<LinkKind, LinkStatus>) -> Sam
             "eng" => s.engine_discrete = opt::<u8>(v).map(|x| x != 0),
             "v" => s.supply_v = opt(v),
             "maint" => s.maintenance = v == "1",
+            "rfsw" => s.rf_switch = opt::<u8>(v).map(|x| x != 0),
+            "pfail" => s.power_fail = v == "1",
+            "baro" => s.baro_hpa = opt(v),
             "a429" => {
                 for w in v.split(',') {
                     if let Some((ch, hex)) = w.split_once(':') {

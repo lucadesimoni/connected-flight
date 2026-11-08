@@ -52,6 +52,28 @@ pub enum Source {
     Discrete,
     /// The CFB's own accelerometer.
     OwnImu,
+    /// The CFB's own barometer (cabin static; ≈ outside static in an
+    /// unpressurised aircraft, NOT in a pressurised cabin).
+    OwnBaro,
+}
+
+/// ISA pressure altitude in feet from static pressure in hPa
+/// (standard setting 1013.25 hPa).
+pub fn pressure_altitude_ft(hpa: f64) -> f64 {
+    (1.0 - (hpa / 1013.25).powf(0.190_284)) * 145_366.45
+}
+
+/// Use the own barometer for altitude when the aircraft provides none
+/// (preferred over GNSS height for reports, like a transponder would).
+/// CFB-HLR-062.
+pub fn apply_baro(r: &mut Reference, baro_hpa: Option<f64>) {
+    if r.alt_src == Source::Aircraft {
+        return;
+    }
+    if let Some(p) = baro_hpa.filter(|p| (100.0..=1100.0).contains(p)) {
+        r.alt_ft = Some(pressure_altitude_ft(p).round() as i32);
+        r.alt_src = Source::OwnBaro;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -196,6 +218,22 @@ mod tests {
         assert_eq!((r.engine_running, r.engine_src), (Some(false), Source::Discrete));
         let r = select(&c, 0.0, None, None, None, Some(true));
         assert_eq!((r.engine_running, r.engine_src), (Some(true), Source::OwnImu));
+    }
+
+    #[test]
+    fn baro_altitude_and_priority() {
+        assert!(pressure_altitude_ft(1013.25).abs() < 0.5);
+        assert!((pressure_altitude_ft(696.8) - 10_000.0).abs() < 30.0);
+        let mut r = select(&ReferenceConfig::default(), 0.0, None, Some(fix(47.0, 8.0, 0.0, 0.0)), None, None);
+        assert_eq!(r.alt_src, Source::OwnGnss);
+        apply_baro(&mut r, Some(1013.25));
+        assert_eq!((r.alt_src, r.alt_ft), (Source::OwnBaro, Some(0)));
+        apply_baro(&mut r, Some(5.0)); // implausible: ignored
+        assert_eq!(r.alt_src, Source::OwnBaro);
+        let d = arinc(47.0, 8.0, 140.0, 10.0);
+        let mut r = select(&ReferenceConfig::default(), 10.0, Some(&d), None, None, None);
+        apply_baro(&mut r, Some(1013.25));
+        assert_eq!(r.alt_src, Source::Aircraft, "aircraft altitude wins");
     }
 
     #[test]

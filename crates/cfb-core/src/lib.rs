@@ -30,6 +30,8 @@ pub mod ota;
 pub mod phase;
 pub mod queue;
 pub mod reference;
+pub mod sbd;
+pub mod status;
 pub mod update;
 
 pub use config::Config;

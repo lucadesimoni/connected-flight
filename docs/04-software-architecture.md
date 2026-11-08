@@ -62,6 +62,8 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-022 | Metered links shall respect a per-flight byte budget | `link.rs` | `flight_budget_caps_satcom` |
 | CFB-HLR-023 | Cheapest permitted link shall be chosen | `link.rs` | `ground_prefers_cheapest`, `leo_preferred_over_iridium_in_flight_when_enabled` |
 | CFB-HLR-024 | Each radio shall be switched off by its configured command whenever transmission is not permitted, and "off" re-asserted periodically | `cfbd` RF control, `config.rs` `RfCommands` | `bench_config_parses_with_rf_and_transport`; bench tests T6, T11–T13 |
+| CFB-HLR-025 | Links behind a physical radio switch shall be inhibited while the switch is OFF or its state is unknown | `cfbd` (switch handling), `config.rs` `RfSwitchConfig` | portable end-to-end run (docs/10 T19) |
+| CFB-HLR-026 | On power-fail the queue shall be saved at once; after `shutdown_after_s` a final snapshot and clean power-off | `cfbd` (power fail) | portable end-to-end run (docs/10 T20) |
 | CFB-HLR-030 | Queue shall be byte-bounded; evict lowest priority oldest first, never higher priority | `queue.rs` `push` | `eviction_lowest_priority_oldest_first`, `low_priority_never_evicts_higher` |
 | CFB-HLR-031 | Expired messages shall be dropped | `queue.rs` `expire` | `ttl_expiry` |
 | CFB-HLR-032 | Corrupt/missing snapshot shall give empty queue, not a failure | `queue.rs` `load_or_new` | `save_and_load_file`, `snapshot_roundtrip_and_corruption` |
@@ -79,6 +81,7 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-059 | Engine running from vibration with on/off delays; no IMU data = unknown | `imu.rs` `EngineVibDetector` | `engine_detection_with_delays` |
 | CFB-HLR-060 | Each quantity from the best valid source (aircraft > own sensor; discrete > IMU) | `reference.rs` `select` | `aircraft_source_preferred_when_valid`, `falls_back_to_own_gnss_when_arinc_stale_or_absent`, `engine_discrete_overrides_vibration` |
 | CFB-HLR-061 | Aircraft vs own GNSS disagreement shall be flagged and reported | `reference.rs`, `cfbd` | `disagreement_flagged` |
+| CFB-HLR-062 | Own barometer altitude used when no aircraft altitude; aircraft altitude always preferred | `reference.rs` `apply_baro` | `baro_altitude_and_priority` |
 | CFB-HLR-070 | Configured vs detected modules shall be compared and mismatches reported | `modules.rs` | `detection_mismatch_reported` |
 | CFB-HLR-071 | A link or input shall only be enabled if its module is fitted | `config.rs` `validate_modules` | `enabled_link_without_module_rejected` |
 | CFB-HLR-080 | Edge apps shall only read a data copy and return outputs; no other access | `edge.rs` `EdgeApp`, `DataView` | by construction (interface), reviewed |
@@ -86,6 +89,8 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-082 | A panicking or CPU-overrunning app shall be disabled without affecting others | `edge.rs` | `panicking_app_is_disabled_others_continue`, `cpu_overrun_disables_after_limit` |
 | CFB-HLR-083 | App packages shall be signed and listed in the ASCI | `edge.rs` `load_verified` | `signed_package_must_be_in_asci` |
 | CFB-HLR-084 | Exceedance, trend and summary rules per package definition | `edge.rs` `RuleApp` | `exceedance_start_and_end`, `short_exceedance_not_reported`, `trend_needs_stability_and_reports_once_per_flight`, `summary_at_engine_stop` |
+| CFB-HLR-091 | Iridium SBD: frames batched into ≤ 340-byte MO messages; acked only on gateway success (MO status 0–4); duplicates suppressed; weak signal holds frames | `sbd.rs`, `cfb-drivers/link_sbd.rs` | `pack_respects_limit_and_roundtrips`, `parse_modem_responses`, `link_batches_frames_and_acks_after_gateway_ok`, `no_ack_without_gateway_success_and_link_goes_down`, `weak_signal_holds_frames`, `oversize_frame_refused_up_front` |
+| CFB-HLR-100 | Status lights: green = radios allowed (blink: no link yet), amber = radios forced off (blink: phase unknown), red = fault; green and amber never together | `status.rs`, `cfb-drivers/led.rs` | `green_and_amber_never_both_on`, `typical_states`, `writes_only_on_change` |
 | CFB-HLR-090 | Only frames from the configured ground address shall be accepted; link up/down from ground replies (strict) or unanswered sends (metered) | `cfbd/transport.rs` | `send_ack_and_uplink_roundtrip`, `foreign_sender_ignored`, `metered_bearer_optimistic_until_unanswered` |
 
 ## Phase logic
