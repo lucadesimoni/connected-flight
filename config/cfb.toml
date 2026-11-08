@@ -1,0 +1,65 @@
+# Connected Flight Box - installed configuration (example)
+# Lives on the read-only rootfs at /etc/cfb/cfb.toml.
+# Changes only through a signed configuration update.
+
+[aircraft]
+registration  = "HB-ABC"
+icao24        = "4B1234"
+aircraft_type = "Generic CS-23 Level 1 SEP"
+bus_voltage   = 28            # 14 or 28
+
+[phase]
+airborne_speed_kt  = 50.0     # set from Vs0/Vr of the type
+ground_speed_kt    = 35.0
+airborne_confirm_s = 5.0
+ground_confirm_s   = 20.0
+input_timeout_s    = 10.0
+
+# ---------------------------------------------------------------- links
+# cost_per_mb is used only to rank links against each other.
+
+[links.wifi]
+enabled             = true
+ground_only         = true    # enforced by config validation
+cost_per_mb         = 0.0
+min_priority        = "bulk"
+
+[links.cellular]
+enabled = true
+ground_only = true
+cost_per_mb         = 0.01
+min_priority        = "bulk"
+
+[links.leo_sat]
+enabled             = false   # only if an approved LEO terminal is installed
+ground_only         = false
+cost_per_mb         = 2.0
+min_priority        = "normal"
+flight_budget_bytes = 209715200   # 200 MiB per flight
+
+[links.iridium]
+enabled             = true
+ground_only         = false
+cost_per_mb         = 600.0
+min_priority        = "high"
+flight_budget_bytes = 65536       # 64 KiB per flight, about 2000 position reports
+
+# ---------------------------------------------------------------- queue
+[queue]
+max_bytes           = 268435456   # 256 MiB
+snapshot_path       = "/data/cfb/queue.bin"
+snapshot_interval_s = 60
+
+[reporting]
+position_interval_air_s    = 60
+position_interval_ground_s = 0
+position_ttl_s             = 600
+
+# ---------------------------------------------------------------- update
+[update]
+hw_part_number = "CFB-HW-100"
+min_supply_v   = 12.0            # 24.0 recommended for 28 V aircraft
+trusted_keys   = [
+  # Design organisation release key(s), hex Ed25519 public key.
+  "789b1d55d02a7f1b13c7616635f496013fd40e6bd6da55f1d57dcfeb73149932",  # DEVELOPMENT key - replace for release
+]

@@ -1,0 +1,12 @@
+[package]
+name = "cfb-core"
+description = "Connected Flight Box core logic: flight phase, link policy, store-and-forward, framing, update gating"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+ed25519-dalek = "2"
+sha2 = "0.10"

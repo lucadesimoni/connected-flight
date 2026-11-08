@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/cfb-core", "crates/cfbd"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Proprietary"
+rust-version = "1.80"
+
+[profile.release]
+opt-level = "s"        # small binary, low RAM footprint
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

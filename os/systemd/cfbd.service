@@ -1,0 +1,26 @@
+[Unit]
+Description=Connected Flight Box daemon
+After=cfb-io.service
+Requires=cfb-io.service
+
+[Service]
+Type=notify
+# cfb-io writes one input line per second to the FIFO (GNSS via gpsd,
+# discretes via libgpiod, link state from ModemManager / iwd / Certus modem).
+ExecStart=/bin/sh -c 'exec /usr/bin/cfbd --config /etc/cfb/cfb.toml < /run/cfb/inputs'
+WatchdogSec=10
+Restart=always
+RestartSec=2
+# Hardening: the daemon needs no privileges.
+User=cfb
+Group=cfb
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/data/cfb
+MemoryMax=64M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
