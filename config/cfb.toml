@@ -8,6 +8,84 @@ icao24        = "4B1234"
 aircraft_type = "Generic CS-23 Level 1 SEP"
 bus_voltage   = 28            # 14 or 28
 
+# ---------------------------------------------------------------- modules
+# Hardware fitted to this unit. Checked at boot against the module ID
+# EEPROMs; a link can only be enabled if its module is listed here.
+[modules]
+arinc429 = { channels = 2, speed = "low" }   # remove the line if not fitted
+gnss     = true                             # own GNSS (reference sensor module)
+imu      = true                             # own accelerometer (reference sensor module)
+wifi     = true
+cellular = "5g"                             # "4g", "5g" or "none"
+satcom   = ["iridium"]                      # [], ["iridium"], ["leo_sat"], or both
+
+# ---------------------------------------------------------------- ARINC 429
+# Receive only. Labels from the ICD of the source LRU (GNSS/FMS/ADC/EDU).
+# Defaults are common GAMA assignments: CHECK against the actual ICD.
+[arinc429]
+label_reversed = false
+
+[[arinc429.labels]]
+label = "310"
+param = "latitude"
+format = "bnr"
+range = 180.0
+sig_bits = 20
+
+[[arinc429.labels]]
+label = "311"
+param = "longitude"
+format = "bnr"
+range = 180.0
+sig_bits = 20
+
+[[arinc429.labels]]
+label = "312"
+param = "ground_speed"
+format = "bnr"
+range = 4096.0
+sig_bits = 15
+
+[[arinc429.labels]]
+label = "313"
+param = "track"
+format = "bnr"
+range = 180.0
+sig_bits = 15
+
+[[arinc429.labels]]
+channel = 1                                 # air data computer on bus 2
+label = "203"
+param = "pressure_altitude"
+format = "bnr"
+range = 131072.0
+sig_bits = 17
+
+[[arinc429.labels]]
+channel = 1
+label = "212"
+param = "altitude_rate"
+format = "bnr"
+range = 32768.0
+sig_bits = 11
+
+# ---------------------------------------------------------------- IMU
+[imu]
+axes            = ["+x", "+y", "+z"]        # sensor -> aircraft (fwd, right, down)
+sample_rate_hz  = 100.0
+engine_vib_g    = 0.04
+engine_on_s     = 5.0
+engine_off_s    = 10.0
+hard_landing_nz = 1.8                       # advisory only, AMM criteria apply
+turbulence_dnz  = 1.0
+
+# ---------------------------------------------------------------- reference
+[reference]
+arinc_max_age_s = 2.0
+gnss_max_age_s  = 2.0
+pos_disagree_nm = 0.5
+gs_disagree_kt  = 15.0
+
 [phase]
 airborne_speed_kt  = 50.0     # set from Vs0/Vr of the type
 ground_speed_kt    = 35.0

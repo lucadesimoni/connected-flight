@@ -1,0 +1,80 @@
+# Connected Flight Box - minimal installed configuration (example)
+# No ARINC 429, no satcom: own GNSS + IMU, Wi-Fi and 4G on ground only.
+# Position reports are queued in flight and sent after landing.
+# Lives on the read-only rootfs at /etc/cfb/cfb.toml.
+# Changes only through a signed configuration update.
+
+[aircraft]
+registration  = "HB-ABC"
+icao24        = "4B1234"
+aircraft_type = "Generic CS-23 Level 1 SEP"
+bus_voltage   = 28            # 14 or 28
+
+# ---------------------------------------------------------------- modules
+# Hardware fitted to this unit. Checked at boot against the module ID
+# EEPROMs; a link can only be enabled if its module is listed here.
+[modules]
+gnss     = true                             # own GNSS (reference sensor module)
+imu      = true                             # own accelerometer (reference sensor module)
+wifi     = true
+cellular = "4g"                             # "4g", "5g" or "none"
+satcom   = []                               # [], ["iridium"], ["leo_sat"], or both
+
+# ---------------------------------------------------------------- IMU
+[imu]
+axes            = ["+x", "+y", "+z"]        # sensor -> aircraft (fwd, right, down)
+sample_rate_hz  = 100.0
+engine_vib_g    = 0.04
+engine_on_s     = 5.0
+engine_off_s    = 10.0
+hard_landing_nz = 1.8                       # advisory only, AMM criteria apply
+turbulence_dnz  = 1.0
+
+# ---------------------------------------------------------------- reference
+[reference]
+arinc_max_age_s = 2.0
+gnss_max_age_s  = 2.0
+pos_disagree_nm = 0.5
+gs_disagree_kt  = 15.0
+
+[phase]
+airborne_speed_kt  = 50.0     # set from Vs0/Vr of the type
+ground_speed_kt    = 35.0
+airborne_confirm_s = 5.0
+ground_confirm_s   = 20.0
+input_timeout_s    = 10.0
+
+# ---------------------------------------------------------------- links
+# cost_per_mb is used only to rank links against each other.
+
+[links.wifi]
+enabled             = true
+ground_only         = true    # enforced by config validation
+cost_per_mb         = 0.0
+min_priority        = "bulk"
+
+[links.cellular]
+enabled = true
+ground_only = true
+cost_per_mb         = 0.01
+min_priority        = "bulk"
+
+# ---------------------------------------------------------------- queue
+[queue]
+max_bytes           = 268435456   # 256 MiB
+snapshot_path       = "/data/cfb/queue.bin"
+snapshot_interval_s = 60
+
+[reporting]
+position_interval_air_s    = 120
+position_interval_ground_s = 0
+position_ttl_s             = 0       # keep: whole track uploads after landing
+
+# ---------------------------------------------------------------- update
+[update]
+hw_part_number = "CFB-HW-100"
+min_supply_v   = 12.0            # 24.0 recommended for 28 V aircraft
+trusted_keys   = [
+  # Design organisation release key(s), hex Ed25519 public key.
+  "789b1d55d02a7f1b13c7616635f496013fd40e6bd6da55f1d57dcfeb73149932",  # DEVELOPMENT key - replace for release
+]

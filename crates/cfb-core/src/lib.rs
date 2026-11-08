@@ -14,11 +14,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod arinc429;
 pub mod config;
 pub mod frame;
+pub mod gnss;
+pub mod imu;
 pub mod link;
+pub mod modules;
 pub mod phase;
 pub mod queue;
+pub mod reference;
 pub mod update;
 
 pub use config::Config;

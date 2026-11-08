@@ -6,14 +6,26 @@
 //! The file sits on the read-only root filesystem and changes only through a
 //! signed configuration update.
 
+use crate::arinc429::{default_labels, LabelDef};
+use crate::imu::{ImuConfig, Mounting};
 use crate::link::{LinkKind, LinkPolicy};
+use crate::modules::Modules;
 use crate::phase::PhaseConfig;
+use crate::reference::ReferenceConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub aircraft: Aircraft,
+    /// Which hardware modules are fitted.
+    pub modules: Modules,
+    #[serde(default)]
+    pub arinc429: ArincConfig,
+    #[serde(default)]
+    pub imu: ImuConfig,
+    #[serde(default)]
+    pub reference: ReferenceConfig,
     #[serde(default)]
     pub phase: PhaseConfig,
     pub links: BTreeMap<LinkKind, LinkPolicy>,
@@ -29,6 +41,22 @@ pub struct Aircraft {
     pub aircraft_type: String,
     /// Electrical system nominal voltage: 14 or 28.
     pub bus_voltage: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArincConfig {
+    /// Receiver delivers the label already bit-reversed (natural order).
+    #[serde(default)]
+    pub label_reversed: bool,
+    /// Labels to decode, from the source LRU's ICD.
+    #[serde(default = "default_labels")]
+    pub labels: Vec<LabelDef>,
+}
+
+impl Default for ArincConfig {
+    fn default() -> Self {
+        Self { label_reversed: false, labels: default_labels() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +117,7 @@ impl Config {
             return Err(ConfigError("phase.ground_speed_kt must be below airborne_speed_kt".into()));
         }
         self.trusted_verifying_keys()?;
+        self.validate_modules()?;
         if self.reporting.position_interval_air_s == 0 {
             return Err(ConfigError("position_interval_air_s must be > 0".into()));
         }
@@ -97,6 +126,29 @@ impl Config {
 }
 
 impl Config {
+    /// CFB-HLR-071: every enabled link and every configured input must have
+    /// its hardware module fitted.
+    fn validate_modules(&self) -> Result<(), ConfigError> {
+        self.modules.validate().map_err(ConfigError)?;
+        for (k, p) in &self.links {
+            if p.enabled && !self.modules.has_link(*k) {
+                return Err(ConfigError(format!("link {k:?} enabled but its module is not fitted")));
+            }
+        }
+        if let Some(a) = &self.modules.arinc429 {
+            crate::arinc429::Decoder::new(self.arinc429.labels.clone()).map_err(ConfigError)?;
+            for l in &self.arinc429.labels {
+                if l.channel.is_some_and(|c| c >= a.channels) {
+                    return Err(ConfigError(format!("ARINC label {} on channel beyond module", l.label)));
+                }
+            }
+        }
+        if self.modules.imu {
+            Mounting::parse(&self.imu.axes).map_err(ConfigError)?;
+        }
+        Ok(())
+    }
+
     /// Parse `update.trusted_keys`. An invalid key is a configuration error,
     /// never silently skipped.
     pub fn trusted_verifying_keys(&self) -> Result<Vec<ed25519_dalek::VerifyingKey>, ConfigError> {
@@ -122,6 +174,22 @@ mod tests {
     use super::*;
 
     const EXAMPLE: &str = include_str!("../../../config/cfb.toml");
+    const MINIMAL: &str = include_str!("../../../config/cfb-minimal.toml");
+
+    #[test]
+    fn minimal_config_parses() {
+        let c = Config::from_toml(MINIMAL).unwrap();
+        assert!(c.modules.arinc429.is_none());
+        assert!(c.modules.satcom.is_empty());
+    }
+
+    #[test]
+    fn enabled_link_without_module_rejected() {
+        let bad = MINIMAL.replacen("[links.cellular]\nenabled = true", "[links.iridium]\nenabled = true", 1);
+        assert_ne!(bad, MINIMAL);
+        let err = Config::from_toml(&bad).unwrap_err().0;
+        assert!(err.contains("not fitted"), "{err}");
+    }
 
     #[test]
     fn example_config_parses() {

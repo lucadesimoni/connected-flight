@@ -5,6 +5,19 @@ on the **Raspberry Pi 5 / Compute Module 5**. It sends data **in flight over
 satcom** and **on ground over LTE/5G or Wi-Fi**. It is designed to be
 installed as a **minor change** with **DAL D field-loadable software**.
 
+* **Modular:** a base unit (CM5, power, discretes, Wi-Fi) plus plug-in
+  modules:
+  * **ARINC 429** receiver (2 or 4 channels, receive only);
+  * **reference sensors** (own GNSS and accelerometer);
+  * **4G or 5G** cellular;
+  * optional **satcom** (Iridium, LEO).
+
+  One software build adapts to whichever modules are fitted.
+* **Aircraft data plus own reference:** position, speed and altitude come
+  from the aircraft over ARINC 429. When that source is lost, the box's own
+  GNSS takes over, and while both work they are cross-checked. The
+  accelerometer detects a running engine from vibration and flags hard
+  landings and turbulence for maintenance.
 * **Safety by hardware:** receive-only, isolated avionics interfaces, and a
   WoW-driven hardware interlock that holds the cellular modem off in flight.
   Because of that, software updates stay low-risk and cheap to approve.
@@ -36,9 +49,10 @@ installed as a **minor change** with **DAL D field-loadable software**.
 ## Repository layout
 
 ```
-crates/cfb-core   decision logic (phase, link policy, queue, framing, update gate, config)
+crates/cfb-core   arinc429, gnss, imu, reference, modules, phase, link, queue, frame, update, config
 crates/cfbd       daemon (1 Hz loop) + cfb-release signing tool
-config/cfb.toml   example installed configuration
+config/cfb.toml          full build: ARINC + GNSS/IMU + Wi-Fi + 5G + Iridium
+config/cfb-minimal.toml  ground build: GNSS/IMU + Wi-Fi + 4G, no ARINC, no satcom
 os/rauc           RAUC A/B slot configuration
 os/systemd        hardened service units, watchdog, mark-good
 docs/             engineering and certification documents
@@ -47,24 +61,32 @@ docs/             engineering and certification documents
 ## Build and run
 
 ```sh
-cargo test                                    # 37 HLR-traced tests
+cargo test                                    # 68 HLR-traced tests
 cargo run --release --bin cfbd -- --config config/cfb.toml --simulate
+cargo run --release --bin cfbd -- --config config/cfb.toml --simulate --hard-landing
+cargo run --release --bin cfbd -- --config config/cfb-minimal.toml --simulate
 ```
 
-The simulation flies a scripted leg: parked, taxi, takeoff, 25 min cruise,
-landing, taxi-in, shutdown. The output shows the phase changes, the radios
-being enabled and inhibited, and the traffic per link:
+The simulator generates the raw inputs the real I/O service would deliver:
+ARINC 429 words, NMEA sentences, 100 Hz accelerometer samples, discretes
+and link state. The scripted leg covers parking, taxi, takeoff, cruise with
+an ARINC outage and a turbulence encounter, landing, taxi-in, shutdown and
+maintenance mode:
 
 ```
-[    20s] phase Unknown -> OnGround
-[    20s] RF Cellular: ENABLED
-[   189s] phase OnGround -> Unknown          <- takeoff roll: radios off
+modules: base, arinc429, gnss, imu, wifi, cellular_5g, iridium
+[    10s] REF position=Aircraft engine=OwnImu      <- engine detected from vibration
+[   189s] phase OnGround -> Unknown                <- takeoff roll: cellular off
 [   201s] phase Unknown -> Airborne
-[  1729s] phase Unknown -> OnGround
-[  1729s] queued flight data file (8 x 32 KiB) for ground upload
+[   902s] REF position=OwnGnss engine=OwnImu      <- ARINC lost: own GNSS takes over
+[  1001s] REF position=Aircraft engine=OwnImu
+[  1200s] TURBULENCE ADVISORY nz 0.94/2.21 at Some((47.500076, 8.600063)) 8500ft
+[  1730s] LANDING touchdown nz_max 1.44
+[  1730s] queued flight data file (8 x 32 KiB) for ground upload
 [  1860s] update gate: OPEN (ready to load software)
-Cellular: 8 frames, 262264 bytes
-Iridium: 27 frames, 810 bytes
+ARINC 429: 10800 words, 0 parity errors, 0 unknown labels
+Cellular: 11 frames, 262401 bytes
+Iridium: 28 frames, 893 bytes
 ```
 
 To cross-compile for the Pi (aarch64), use
@@ -84,9 +106,11 @@ cfb-release verify <pubkey-hex> manifest.toml
 | Area | State |
 |---|---|
 | Core logic (phase, links, queue, framing, update gate) | Done, unit-tested |
+| ARINC 429 decoder, own GNSS (NMEA), IMU processing, reference selection, module checks | Done, unit-tested |
 | Daemon loop, simulation, systemd/watchdog, queue persistence | Done |
 | Release signing tool | Done |
-| `cfb-io` adapters (gpsd, gpiod, ModemManager, Certus AT driver) | **To do** |
+| `cfb-io` adapters (ARINC SPI driver, GNSS UART, IMU via IIO, gpiod, ModemManager, Certus AT driver, ID EEPROMs) | **To do** |
+| Base board and module PCBs | **To do** |
 | Link adapters + WireGuard ground service + end-to-end acks | **To do** (simulation acks immediately) |
 | Yocto/Buildroot image, secure boot, dm-verity | **To do** (RAUC + units provided) |
 | Carrier board, enclosure, DO-160G tests | **To do** |

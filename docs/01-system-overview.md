@@ -15,6 +15,10 @@ CS-23 aeroplanes (Level 1–4, piston and turboprop). It:
 * receives **field-loadable software updates**, installed only when parked,
   engine off, in maintenance mode.
 
+The hardware is **modular**: a base unit (compute, power, discretes, Wi-Fi)
+plus plug-in modules for the reference sensors (own GNSS + accelerometer),
+an ARINC 429 receiver, 4G or 5G cellular, and optional satcom.
+
 It is **non-essential equipment**. No aircraft function depends on it, and it
 cannot send data to any avionics.
 
@@ -24,9 +28,9 @@ cannot send data to any avionics.
                     ┌──────────── Satellite (Iridium / LEO) ───────────┐
                     │                                                   │
    ┌────────────────┴───┐  read-only, isolated   ┌─────────────────┐    │
-   │  Avionics / EFIS   │──ARINC 429 / RS-232──▶ │                 │    │
-   │  Engine monitor    │──RS-232 / CAN (listen)▶│      CFB        │────┤
-   │  GNSS              │──NMEA / RS-232───────▶ │  (CM5 / Pi 5)   │    │
+   │  Avionics / EFIS   │──ARINC 429 (RX only)─▶ │  [ARINC module] │    │
+   │  Engine monitor    │──RS-232 / CAN (listen)▶│      CFB        │──[satcom module, option]
+   │  GNSS antenna(own) │──────────────────────▶ │ [ref: GNSS+IMU] │    │
    │  WoW / squat switch│──opto discrete───────▶ │                 │──LTE/5G (ground only)
    │  Oil-press switch  │──opto discrete───────▶ │                 │──Wi-Fi client (ground only)
    └────────────────────┘                        │                 │──Cabin Wi-Fi AP (EFB)
@@ -57,6 +61,11 @@ cannot send data to any avionics.
 
 | Function | Where | Notes |
 |---|---|---|
+| ARINC 429 decoding | `cfb-core::arinc429` | Receive only, configurable label table, parity/SSM/age checks |
+| Own GNSS | `cfb-core::gnss` | NMEA RMC/GGA, backup position, time source |
+| Own accelerometer | `cfb-core::imu` | Engine vibration, accel, touchdown/turbulence Nz advisories |
+| Reference selection | `cfb-core::reference` | Aircraft source first, own sensors as fallback and cross-check |
+| Module management | `cfb-core::modules` | Configured vs detected modules; links only if fitted |
 | Flight phase detection | `cfb-core::phase` | WoW primary, GNSS fallback, debounced, fail-to-airborne |
 | Radio enable policy | `cfb-core::link` | Software layer; hardware interlock is primary |
 | Link selection / budgets | `cfb-core::link` | Cheapest permitted link, per-flight satcom cap |

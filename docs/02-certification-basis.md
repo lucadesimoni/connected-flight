@@ -34,6 +34,7 @@ aircraft's original type certification basis.
 | Electrical protection | CS 23.2525, wiring per ASTM F3313 / AC 43.13-1B practice | Dedicated CB, wire sizing, EWIS separation |
 | Lightning / HIRF | CS 23.2520 | Non-essential: shows no adverse effect on other systems (DO-160G Sec. 20/21/22 as required) |
 | Interference with other systems | CS 23.2500(b) | EMI ground + flight test against nav/com, ADF, GNSS, autopilot |
+| Data bus connection (ARINC 429) | CS 23.2500, 23.2505 | Bus-load analysis, splice/connector per approved data, ground test showing the source LRU and other receivers are unaffected |
 | Emergency landing loads (mounting) | CS 23.2270 | ASTM F3083 static load test or analysis of tray and box |
 | Fire / flammability | CS 23.2325 | Enclosure in aluminium; flammability data for plastics, cables |
 | Placards, AFM supplement | CS 23.2620, 23.2610 | AFMS: function, limitations, CB location |
@@ -52,6 +53,9 @@ aircraft's original type certification basis.
 | CFB causes EMI on nav/com | Possible effect on navigation | Prevented by design + EMI test; mitigation: CB pull (AFMS) |
 | Cellular transmits in flight | Regulatory non-compliance, possible interference | Prevented by **hardware** interlock (WoW → W_DISABLE#) |
 | CFB drives an avionics input | Could corrupt avionics data | **Not possible**: receive-only hardware, no transmit path |
+| CFB loads / shorts an ARINC 429 bus it listens on | Could degrade data to other receivers on that bus | High-impedance isolated receiver; bus-load check (≤ 20 receivers) per installation; fault test of the RX input |
+| Own GNSS / IMU gives wrong data | Wrong reference in ground reports or false/missed advisory; not used by crew or aircraft | No Safety Effect (advisories are maintenance information; AMM criteria remain) |
+| Own GNSS antenna splitter degrades aircraft GNSS | Could affect certified navigation | Prefer a separate antenna; a splitter needs an approved type and a GNSS performance check |
 | Electrical fault, smoke | Fire hazard | CB, fuse, wire sizing, enclosure, DO-160 Sec. 16 |
 
 ### Development Assurance Level

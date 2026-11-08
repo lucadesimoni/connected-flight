@@ -13,19 +13,34 @@
 | I/O adapters | `cfb-io` (separate service): gpsd, libgpiod, ModemManager, iwd, Certus AT driver | Keeps drivers out of the decision logic; writes one input line/s |
 | Ground link security | WireGuard tunnel to operator ground service | Outbound only, small, fast handshake over satcom |
 
+## Modules in software
+
+Each hardware module maps to one `cfb-core` component, created only if the
+module is in `[modules]`:
+
+| Hardware module | Component | Output |
+|---|---|---|
+| ARINC 429 RX | `arinc429::Decoder` (configurable label table) | named parameters with SSM + age |
+| Reference sensor: GNSS | `gnss::NmeaParser` | own fix, time |
+| Reference sensor: IMU | `imu::ImuProcessor`, `imu::EngineVibDetector` | vibration, long. accel, Nz; engine running |
+| (all of the above) | `reference::select` | one `Reference`: position, GS, track, altitude, VS, engine, with source and cross-check flags |
+| Wi-Fi / Cellular 4G·5G / Satcom | `link::LinkManager` | permitted + chosen bearer |
+
 ## Process view
 
 ```
  cfb-io  ──(FIFO /run/cfb/inputs, 1 line/s)──▶  cfbd  ──▶ link adapters (per bearer)
    │                                              │
-   ├ gpsd (GNSS)                                  ├ phase detector
+   ├ ARINC 429 RX (SPI): raw words                ├ ARINC decoder, NMEA parser, IMU processor
+   ├ own GNSS (UART): raw NMEA                    ├ reference selection + cross-check
+   ├ own IMU (SPI/IIO): raw samples, 100 Hz       ├ phase detector
    ├ gpiod (WoW, oil press, maint key, PWR_FAIL)  ├ link policy + RF enables
-   ├ ModemManager / iwd / Certus status           ├ store-and-forward queue
-   └ ARINC/serial/CAN parsers → messages          ├ report generator
-                                                  └ update gate (maintenance page)
+   ├ ModemManager / iwd / Certus status           ├ reports + IMU advisories → queue
+   └ module ID EEPROMs (at boot)                  └ update gate (maintenance page)
 ```
 
-`cfbd` never touches hardware directly. Everything it decides is in
+`cfb-io` only moves raw data; all decoding is in `cfb-core`, so it is
+covered by the HLR tests. `cfbd` never touches hardware directly. Everything it decides is in
 `cfb-core`, which has no I/O apart from the queue snapshot. That is what makes
 the HLR tests meaningful: the tests exercise the same code that flies.
 
@@ -47,6 +62,15 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-032 | Corrupt/missing snapshot shall give empty queue, not a failure | `queue.rs` `load_or_new` | `save_and_load_file`, `snapshot_roundtrip_and_corruption` |
 | CFB-HLR-040 | Update only parked, engine off, maint mode, voltage OK, signed, in ASCI, hash OK | `update.rs` | all `update::tests` |
 | CFB-HLR-050 | Config allowing cellular/Wi-Fi client in flight shall be rejected | `config.rs` `validate` | `cellular_in_flight_is_rejected` |
+| CFB-HLR-055 | ARINC 429 words with bad parity, non-normal SSM, wrong channel/SDI or stale age shall not be used | `arinc429.rs` `Decoder` | `decoder_filters_parity_ssm_and_age`, `channel_and_sdi_filters` |
+| CFB-HLR-056 | BNR/BCD decoding per ARINC 429 (sign bit 29, up to 20 significant bits) | `arinc429.rs` | `bnr_roundtrip_positive_and_negative`, `known_bnr_vector`, `bcd_decoding` |
+| CFB-HLR-057 | NMEA sentences with bad checksum or void fix shall not be used | `gnss.rs` | `rejects_bad_checksum_and_void_fix`, `stale_fix_not_returned` |
+| CFB-HLR-058 | IMU samples shall be rotated to aircraft axes per installed mounting | `imu.rs` `Mounting` | `mounting_parse_and_apply` |
+| CFB-HLR-059 | Engine running from vibration with on/off delays; no IMU data = unknown | `imu.rs` `EngineVibDetector` | `engine_detection_with_delays` |
+| CFB-HLR-060 | Each quantity from the best valid source (aircraft > own sensor; discrete > IMU) | `reference.rs` `select` | `aircraft_source_preferred_when_valid`, `falls_back_to_own_gnss_when_arinc_stale_or_absent`, `engine_discrete_overrides_vibration` |
+| CFB-HLR-061 | Aircraft vs own GNSS disagreement shall be flagged and reported | `reference.rs`, `cfbd` | `disagreement_flagged` |
+| CFB-HLR-070 | Configured vs detected modules shall be compared and mismatches reported | `modules.rs` | `detection_mismatch_reported` |
+| CFB-HLR-071 | A link or input shall only be enabled if its module is fitted | `config.rs` `validate_modules` | `enabled_link_without_module_rejected` |
 
 ## Phase logic
 
@@ -63,6 +87,9 @@ the HLR tests meaningful: the tests exercise the same code that flies.
                                             │ Unknown │  = treated as airborne
                                             └─────────┘
 ```
+
+Ground speed comes from the reference selection, so the phase logic keeps
+working through a loss of the ARINC source (it falls back to own GNSS).
 
 Takeoff and landing rolls (WoW on, speed high) show up as `Unknown`. That is
 on purpose: ground-only radios are already off during the roll.
