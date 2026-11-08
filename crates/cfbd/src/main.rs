@@ -223,6 +223,8 @@ fn main() {
     let confirm_file = Path::new("/run/cfb/ota/confirm");
 
     let mut rf_enabled: BTreeMap<LinkKind, bool> = BTreeMap::new();
+    let mut rf_last_cmd: BTreeMap<LinkKind, f64> = BTreeMap::new();
+    let mut rf_children: Vec<(LinkKind, bool, std::process::Child)> = Vec::new();
     let mut last_phase = det.phase();
     // Set at confirmed airborne, cleared at the next confirmed ground. The
     // landing roll passes through `Unknown` (WoW on, still fast), so a plain
@@ -386,11 +388,40 @@ fn main() {
                 continue;
             }
             let en = lm.tx_permitted(kind, phase);
-            if rf_enabled.get(&kind) != Some(&en) {
+            let changed = rf_enabled.get(&kind) != Some(&en);
+            if changed {
                 println!("[{t:>6.0}s] RF {kind:?}: {}", if en { "ENABLED" } else { "inhibited" });
                 rf_enabled.insert(kind, en);
             }
+            // CFB-HLR-024: switch the radio itself; re-assert "off".
+            if let (false, Some(c)) = (simulate, cfg.rf.get(&kind)) {
+                let due = !en && t - rf_last_cmd.get(&kind).copied().unwrap_or(f64::NEG_INFINITY) >= c.reassert_s as f64;
+                if changed || due {
+                    let argv = if en { &c.on } else { &c.off };
+                    match std::process::Command::new(&argv[0])
+                        .args(&argv[1..])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(ch) => rf_children.push((kind, en, ch)),
+                        Err(e) => out.event(t, MsgType::Health, Priority::Normal, format!("RF {kind:?} command failed to start: {e}")),
+                    }
+                    rf_last_cmd.insert(kind, t);
+                }
+            }
         }
+        let mut still = Vec::new();
+        for (kind, en, mut ch) in rf_children.drain(..) {
+            match ch.try_wait() {
+                Ok(Some(st)) if !st.success() => out.event(t, MsgType::Health, Priority::Normal,
+                    format!("RF {kind:?} {} command failed: {st}", if en { "on" } else { "off" })),
+                Ok(Some(_)) => {}
+                Ok(None) => still.push((kind, en, ch)),
+                Err(e) => eprintln!("RF {kind:?}: {e}"),
+            }
+        }
+        rf_children = still;
 
         // ---- position reports
         let interval = if phase.is_confirmed_ground() {
@@ -407,7 +438,7 @@ fn main() {
                     gs_kt: r.gs_kt.unwrap_or(0.0).max(0.0) as u16,
                     track_deg: r.track_deg.unwrap_or(0.0),
                     vs_fpm: r.vs_fpm.unwrap_or(0),
-                    airborne: !phase.is_confirmed_ground(),
+                    airborne: phase == FlightPhase::Airborne,
                     emergency: false,
                 };
                 out.send(MsgType::Position, Priority::Critical, p.encode().to_vec(), t, cfg.reporting.position_ttl_s);

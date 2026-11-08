@@ -43,6 +43,25 @@ pub struct Config {
     /// status only (no transport in this process).
     #[serde(default)]
     pub transport: Option<TransportConfig>,
+    /// Commands that switch each radio on/off (software RF inhibit).
+    #[serde(default)]
+    pub rf: BTreeMap<LinkKind, RfCommands>,
+}
+
+/// Radio on/off commands, run by cfbd when `LinkManager::tx_permitted`
+/// changes, and "off" re-asserted every `reassert_s` while inhibited.
+/// Until the hardware WoW interlock exists (e.g. a portable unit) this is
+/// what keeps cellular off in flight (CFB-HLR-024).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RfCommands {
+    pub on: Vec<String>,
+    pub off: Vec<String>,
+    #[serde(default = "sixty")]
+    pub reassert_s: u64,
+}
+
+fn sixty() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -199,6 +218,14 @@ impl Config {
                 b.local.parse::<std::net::SocketAddr>().map_err(|_| ConfigError(format!("bearer {k:?}: bad local address")))?;
             }
         }
+        for (k, c) in &self.rf {
+            if !self.modules.has_link(*k) {
+                return Err(ConfigError(format!("rf commands for {k:?} without its module")));
+            }
+            if c.on.is_empty() || c.off.is_empty() {
+                return Err(ConfigError(format!("rf {k:?}: on and off commands required")));
+            }
+        }
         for k in &self.ota.inflight_download_links {
             if matches!(self.links.get(k), Some(p) if p.ground_only) {
                 return Err(ConfigError(format!("ota: {k:?} is ground-only, cannot be an in-flight download link")));
@@ -284,6 +311,16 @@ mod tests {
         let p = crate::edge::AppPackage::parse(include_bytes!("../../../config/apps/turboprop-ops.toml")).unwrap();
         assert_eq!(p.exceedance.len(), 4);
         assert_eq!(p.trend.len(), 1);
+    }
+
+    const BENCH: &str = include_str!("../../../config/cfb-bench-pi5.toml");
+
+    #[test]
+    fn bench_config_parses_with_rf_and_transport() {
+        let c = Config::from_toml(BENCH).unwrap();
+        assert!(c.rf.contains_key(&LinkKind::Cellular) && c.rf.contains_key(&LinkKind::Wifi));
+        assert_eq!(c.transport.unwrap().bearers.len(), 2);
+        assert!(c.modules.satcom.is_empty() && c.modules.arinc429.is_none());
     }
 
     #[test]

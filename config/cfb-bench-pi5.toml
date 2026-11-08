@@ -1,0 +1,100 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+#
+# Connected Flight Box - BENCH / PORTABLE configuration for a Raspberry Pi 5
+#   USB GNSS receiver, onboard Wi-Fi, USB 4G modem (QMI/MBIM, ModemManager).
+#   No ARINC, no satcom, no aircraft connection.
+# Install: /etc/cfb/cfb.toml  (see docs/10-bench-and-portable-test.md)
+
+[aircraft]
+registration  = "BENCH"
+icao24        = "000000"
+aircraft_type = "Bench / portable unit"
+bus_voltage   = 14            # not used on the bench; supply comes from discretes file
+
+[modules]
+gnss     = true
+imu      = false              # add an I2C/SPI IMU later; engine then from vibration
+wifi     = true
+cellular = "4g"
+satcom   = []
+
+[phase]
+airborne_speed_kt  = 50.0
+ground_speed_kt    = 35.0
+airborne_confirm_s = 5.0
+ground_confirm_s   = 20.0
+input_timeout_s    = 10.0
+
+[links.wifi]
+enabled      = true
+ground_only  = true
+cost_per_mb  = 0.0
+min_priority = "bulk"
+
+[links.cellular]
+enabled = true
+ground_only = true
+cost_per_mb  = 0.01
+min_priority = "bulk"
+
+[queue]
+max_bytes           = 67108864        # 64 MiB
+snapshot_path       = "/data/cfb/queue.bin"
+snapshot_interval_s = 60
+
+[reporting]
+position_interval_air_s    = 30
+position_interval_ground_s = 60
+position_ttl_s             = 0        # keep the in-flight track: uploads after landing
+
+[update]
+hw_part_number = "CFB-HW-BENCH"
+min_supply_v   = 11.5
+trusted_keys   = [
+  "789b1d55d02a7f1b13c7616635f496013fd40e6bd6da55f1d57dcfeb73149932",  # DEVELOPMENT key - replace with yours (cfb-release keygen)
+]
+
+[edge]
+asci     = "/etc/cfb/apps-asci.toml"
+app_dirs = ["/etc/cfb/apps"]
+
+[ota]
+enabled      = true
+# Served by the ground server inside the tunnel (see ground/README.md).
+base_url     = "http://10.66.0.1:8080/cfb/CFB-HW-BENCH"
+download_dir = "/data/updates"
+retry_s      = 300.0
+
+# ---- transport: one WireGuard tunnel per bearer (os/net/) ----------------
+[transport]
+ground  = "10.66.0.1:7400"
+retry_s = 15
+
+[transport.bearers.wifi]
+local        = "10.66.1.2:0"
+iface        = "wg-wifi"
+nominal_bps  = 10000000
+keepalive_s  = 15
+down_after_s = 45
+
+[transport.bearers.cellular]
+local        = "10.66.2.2:0"
+iface        = "wg-cell"
+nominal_bps  = 2000000
+keepalive_s  = 30
+down_after_s = 90
+
+# ---- software RF inhibit ---------------------------------------------------
+# Radios are switched OFF whenever on-ground is not confirmed, and "off" is
+# re-asserted every reassert_s. On the bench, SSH over Ethernet, not Wi-Fi:
+# the Wi-Fi radio goes off until the unit sees "on ground".
+[rf.wifi]
+on  = ["nmcli", "radio", "wifi", "on"]
+off = ["nmcli", "radio", "wifi", "off"]
+reassert_s = 60
+
+[rf.cellular]
+on  = ["nmcli", "radio", "wwan", "on"]
+off = ["nmcli", "radio", "wwan", "off"]
+reassert_s = 60

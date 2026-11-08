@@ -61,6 +61,7 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-021 | Links shall carry only priorities ≥ their minimum | `link.rs` `select` | `airborne_uses_satcom_for_critical_only` |
 | CFB-HLR-022 | Metered links shall respect a per-flight byte budget | `link.rs` | `flight_budget_caps_satcom` |
 | CFB-HLR-023 | Cheapest permitted link shall be chosen | `link.rs` | `ground_prefers_cheapest`, `leo_preferred_over_iridium_in_flight_when_enabled` |
+| CFB-HLR-024 | Each radio shall be switched off by its configured command whenever transmission is not permitted, and "off" re-asserted periodically | `cfbd` RF control, `config.rs` `RfCommands` | `bench_config_parses_with_rf_and_transport`; bench tests T6, T11–T13 |
 | CFB-HLR-030 | Queue shall be byte-bounded; evict lowest priority oldest first, never higher priority | `queue.rs` `push` | `eviction_lowest_priority_oldest_first`, `low_priority_never_evicts_higher` |
 | CFB-HLR-031 | Expired messages shall be dropped | `queue.rs` `expire` | `ttl_expiry` |
 | CFB-HLR-032 | Corrupt/missing snapshot shall give empty queue, not a failure | `queue.rs` `load_or_new` | `save_and_load_file`, `snapshot_roundtrip_and_corruption` |

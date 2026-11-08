@@ -4,7 +4,7 @@
 //! cfb-ground - minimal ground service, for bench tests and as the
 //! reference for the air-ground protocol.
 //!
-//!   cfb-ground --listen 0.0.0.0:7400 [--announce-ota]
+//!   cfb-ground --listen 10.66.0.1:7400 [--log /var/lib/cfb-ground/rx.log] [--announce-ota]
 //!
 //! Receives CFB frames (one per UDP datagram, normally inside the WireGuard
 //! tunnels), prints them decoded, and acknowledges each one. With
@@ -14,18 +14,22 @@
 use cfb_core::frame::{encode_ack, Frame, MsgType, EPOCH_2020};
 use cfb_core::PositionReport;
 use std::collections::HashSet;
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::net::UdpSocket;
 
 fn main() {
     let mut listen = "0.0.0.0:7400".to_string();
     let mut announce = false;
+    let mut log_path: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--listen" => listen = args.next().unwrap_or(listen),
             "--announce-ota" => announce = true,
+            "--log" => log_path = args.next(),
             _ => {
-                eprintln!("usage: cfb-ground [--listen ADDR] [--announce-ota]");
+                eprintln!("usage: cfb-ground [--listen ADDR] [--log FILE] [--announce-ota]");
                 std::process::exit(2);
             }
         }
@@ -35,6 +39,15 @@ fn main() {
         std::process::exit(1)
     });
     println!("cfb-ground listening on {listen}");
+    // Append-only receive log: one line per frame (unix time received,
+    // sender, frame time, seq, type, decoded body). Duplicates (resends
+    // after a lost ack) are logged again; dedupe on (sender, seq, frame time).
+    let mut log = log_path.map(|p| {
+        std::fs::OpenOptions::new().create(true).append(true).open(&p).unwrap_or_else(|e| {
+            eprintln!("cfb-ground: log {p}: {e}");
+            std::process::exit(1)
+        })
+    });
     let mut announced = HashSet::new();
     let mut seq: u16 = 0;
     let mut buf = [0u8; 2048];
@@ -61,6 +74,11 @@ fn main() {
         };
         if !(f.msg_type == MsgType::Health && f.payload == b"KA") {
             println!("{from} t={when} #{} {:?}: {body}", f.seq, f.msg_type);
+            if let Some(l) = log.as_mut() {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let _ = writeln!(l, "{now}\t{from}\t{when}\t{}\t{:?}\t{}", f.seq, f.msg_type, body.replace(['\t', '\n'], " "));
+                let _ = l.flush();
+            }
         }
 
         if announce && announced.insert(from.ip()) {

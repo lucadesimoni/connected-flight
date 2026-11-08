@@ -1,29 +1,32 @@
 # Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
 # Proprietary software, not open source. See LICENSE.
 [Unit]
-Description=Connected Flight Box daemon
-After=cfb-io.service
-Requires=cfb-io.service
+Description=Connected Flight Box (cfb-io | cfbd)
+After=network.target NetworkManager.service ModemManager.service
+Wants=wg-quick@wg-wifi.service wg-quick@wg-cell.service
 
 [Service]
 Type=notify
-# cfb-io writes one input line per second to the FIFO (GNSS via gpsd,
-# discretes via libgpiod, link state from ModemManager / iwd / Certus modem).
-ExecStart=/bin/sh -c 'exec /usr/bin/cfbd --config /etc/cfb/cfb.toml < /run/cfb/inputs'
+# cfbd sends the sd_notify messages from inside the pipeline.
+NotifyAccess=all
+EnvironmentFile=/etc/cfb/io.env
+# UART receivers need the baud rate set; harmless for USB (ttyACM) devices.
+ExecStartPre=-/bin/stty -F ${CFB_GNSS} ${CFB_GNSS_BAUD} raw -echo
+ExecStart=/bin/sh -c '/usr/local/bin/cfb-io --gnss "$CFB_GNSS" --discretes /run/cfb/discretes --hw "$CFB_HW" | exec /usr/local/bin/cfbd --config /etc/cfb/cfb.toml'
 WatchdogSec=10
 Restart=always
 RestartSec=2
-# Hardening: the daemon needs no privileges.
+# Hardening: unprivileged; radio switching, rauc install and reboot are
+# granted to user cfb by os/polkit/50-cfb.rules and nothing else.
 User=cfb
 Group=cfb
+SupplementaryGroups=dialout gpio
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-# /data/updates: OTA downloads; /run/cfb: OTA confirm flag from the maintenance page
+# /data/cfb: queue; /data/updates: OTA downloads; /run/cfb: discretes, OTA confirm
 ReadWritePaths=/data/cfb /data/updates /run/cfb
-# rauc install and reboot are granted to user cfb by os/polkit/50-cfb.rules
-# (nothing else); the RAUC daemon does the privileged slot write.
 MemoryMax=64M
 CPUQuota=50%
 

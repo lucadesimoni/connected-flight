@@ -1,0 +1,20 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+# Serves OTA packages to the boxes, inside the tunnel only (10.66.0.1:8080).
+# Plain HTTP is acceptable here: the tunnel encrypts, and every file is
+# verified by signature on the box (ASCI + manifest Ed25519, RAUC X.509).
+[Unit]
+Description=CFB OTA package server (inside WireGuard)
+After=wg-quick@wg0.service
+Requires=wg-quick@wg0.service
+
+[Service]
+ExecStart=/usr/bin/python3 -m http.server 8080 --bind 10.66.0.1 --directory /srv/cfb
+DynamicUser=yes
+Restart=always
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
