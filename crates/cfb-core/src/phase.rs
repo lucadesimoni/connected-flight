@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Flight phase detection.
 //!
 //! The phase drives two things: which radios may transmit (cellular and Wi-Fi

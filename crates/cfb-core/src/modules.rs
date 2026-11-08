@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Hardware module configuration.
 //!
 //! The CFB is a base unit plus plug-in modules (see docs/03-hardware.md):

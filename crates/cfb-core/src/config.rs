@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Box configuration (`/etc/cfb/cfb.toml`).
 //!
 //! The configuration is part of the installed configuration: aircraft-specific

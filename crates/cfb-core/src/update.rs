@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Field-loadable software update gate.
 //!
 //! An update is installed only when **all** of these hold (CFB-HLR-040):

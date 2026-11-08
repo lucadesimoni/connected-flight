@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Connected Flight Box (CFB) core logic.
 //!
 //! This crate contains every decision the box takes, written as pure,
@@ -16,6 +19,7 @@
 
 pub mod arinc429;
 pub mod config;
+pub mod datalog;
 pub mod edge;
 pub mod frame;
 pub mod gnss;

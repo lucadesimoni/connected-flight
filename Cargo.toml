@@ -5,7 +5,10 @@ members = ["crates/cfb-core", "crates/cfbd"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "Proprietary"
+license-file = "LICENSE"
+authors = ["Outthinkx by Luca De Simoni <outthinkx@gmail.com>"]
+publish = false
+repository = "https://github.com/lucadesimoni/connected-flight"
 rust-version = "1.80"
 
 [profile.release]

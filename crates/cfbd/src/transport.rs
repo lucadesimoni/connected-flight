@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Ground transport over IP bearers.
 //!
 //! Each bearer (Starlink/LEO, Iridium Certus, cellular, Wi-Fi) carries one

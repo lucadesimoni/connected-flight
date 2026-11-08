@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! cfb-release - release signing tool for the design organisation.
 //!
 //! Runs on the release workstation (ideally with the key on a token / HSM;

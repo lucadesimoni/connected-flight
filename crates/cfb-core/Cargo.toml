@@ -3,7 +3,9 @@ name = "cfb-core"
 description = "Connected Flight Box core logic: flight phase, link policy, store-and-forward, framing, update gating"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

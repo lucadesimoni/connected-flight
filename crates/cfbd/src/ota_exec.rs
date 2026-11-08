@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Runs the commands of the OTA state machine (`cfb_core::ota`).
 //!
 //! * Download: `curl` per file, resumable (`-C -`), bound to the chosen

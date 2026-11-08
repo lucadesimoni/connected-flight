@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! cfbd - Connected Flight Box daemon.
 //!
 //! Single-threaded 1 Hz control loop:

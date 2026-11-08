@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Edge computing: apps that run inside the box and turn raw data into a
 //! few small results, so expensive links carry results instead of raw data.
 //!

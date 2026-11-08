@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Bounded, prioritised store-and-forward queue.
 //!
 //! Messages wait here until the link manager hands them to a link that may

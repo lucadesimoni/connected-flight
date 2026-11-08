@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Input from the `cfb-io` adapter service: one line per second on a FIFO.
 //!
 //! ```text

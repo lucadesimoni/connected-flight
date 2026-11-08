@@ -1,5 +1,9 @@
 # Connected Flight Box (CFB)
 
+**© 2026 Outthinkx by Luca De Simoni. All rights reserved.** Proprietary
+software; no licence is granted without a written agreement. See
+[LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). Licensing: outthinkx@gmail.com
+
 A low-power connectivity unit for **EASA CS-23 aeroplanes** (Level 1–4), built
 on the **Raspberry Pi 5 / Compute Module 5**. It sends data **in flight over
 satcom** and **on ground over LTE/5G or Wi-Fi**. It is designed to be
@@ -57,13 +61,17 @@ installed as a **minor change** with **DAL D field-loadable software**.
 | [05 Update process](docs/05-update-process.md) | Release, signing, ASCI, OTA download/verify/install, A/B rollback, records |
 | [06 Edge apps](docs/06-edge-apps.md) | In-box computing: containment argument, rule packages, release |
 | [07 PC-12 / PC-24](docs/07-pc12-pc24-installation.md) | Certification basis, data access, Starlink/antennas, environment, sequence |
+| [08 Avionics data access](docs/08-avionics-data-access.md) | Honeywell Apex/Epic maintenance port, ACMS/CMC, ARINC 429/717, QARs, Garmin logs, legal limits, competitors |
+| [09 Ownership & commercialisation](docs/09-ownership-and-commercialisation.md) | IP protection, employment check, trademarks, business models, company setup |
 
 ## Repository layout
 
 ```
 crates/cfb-core   arinc429, gnss, imu, reference, modules, phase, link, queue, frame, update, config
 crates/cfbd       daemon (1 Hz loop), transport, OTA executor, simulator;
-                  bins: cfb-release (signing), cfb-ground (reference ground service)
+                  bins: cfb-release (signing), cfb-ground (reference ground service),
+                        cfb-replay (edge apps over existing flight logs, on the ground),
+                        cfb-a429-survey (bench check of an ARINC label table)
 config/cfb.toml          full build: ARINC + GNSS/IMU + Wi-Fi + 5G + Iridium
 config/cfb-minimal.toml  ground build: GNSS/IMU + Wi-Fi + 4G, no ARINC, no satcom
 config/cfb-pc12-example.toml  PC-12-class: ARINC + 5G + Starlink + Iridium, transport, OTA, edge
@@ -76,7 +84,7 @@ docs/             engineering and certification documents
 ## Build and run
 
 ```sh
-cargo test                                    # 91 HLR-traced tests
+cargo test                                    # 94 HLR-traced tests
 cargo run --release --bin cfbd -- --config config/cfb.toml --simulate
 cargo run --release --bin cfbd -- --config config/cfb.toml --simulate --hard-landing
 cargo run --release --bin cfbd -- --config config/cfb-minimal.toml --simulate

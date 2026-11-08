@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! ARINC 429 receive-only decoding.
 //!
 //! The CFB only *listens* on ARINC 429 buses. The receiver module has no
@@ -405,5 +408,118 @@ mod tests {
         let mut l = default_labels();
         l[0].label = "999".into();
         assert!(Decoder::new(l).is_err());
+    }
+}
+
+// ------------------------------------------------------------ bus survey
+
+/// Statistics for one (channel, label, SDI) seen on a bus.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LabelStats {
+    pub count: u64,
+    pub first_t: f64,
+    pub last_t: f64,
+    /// Raw SSM bit counts, index = SSM bits (00, 01, 10, 11).
+    pub ssm: [u64; 4],
+    /// Range of the raw 19-bit data field (bits 11-29, signed).
+    pub min_raw: i32,
+    pub max_raw: i32,
+}
+
+impl LabelStats {
+    pub fn rate_hz(&self) -> f64 {
+        if self.count < 2 || self.last_t <= self.first_t {
+            0.0
+        } else {
+            (self.count - 1) as f64 / (self.last_t - self.first_t)
+        }
+    }
+}
+
+/// Bus survey: records which labels appear, how often, with which SSM and raw
+/// data range. Purpose: on the bench, **verify** an installation's label table
+/// (from the ICD) against what the bus actually carries, and check bus
+/// activity before connecting. It does not interpret data; scaling and
+/// meaning come only from the data owner's ICD.
+#[derive(Debug, Default)]
+pub struct Survey {
+    pub labels: BTreeMap<(u8, u16, u8), LabelStats>,
+    pub parity_errors: u64,
+}
+
+impl Survey {
+    pub fn feed(&mut self, channel: u8, w: Word, t: f64) {
+        if !w.parity_ok() {
+            self.parity_errors += 1;
+            return;
+        }
+        let mut raw = ((w.0 >> 10) & 0x7FFFF) as i32;
+        if raw & 0x40000 != 0 {
+            raw -= 0x80000;
+        }
+        let e = self.labels.entry((channel, w.label(), w.sdi())).or_insert(LabelStats {
+            count: 0,
+            first_t: t,
+            last_t: t,
+            ssm: [0; 4],
+            min_raw: raw,
+            max_raw: raw,
+        });
+        e.count += 1;
+        e.last_t = t;
+        e.ssm[((w.0 >> 29) & 0b11) as usize] += 1;
+        e.min_raw = e.min_raw.min(raw);
+        e.max_raw = e.max_raw.max(raw);
+    }
+
+    /// Compare with a label table: (labels configured but never seen,
+    /// labels seen but not configured).
+    pub fn compare(&self, defs: &[LabelDef]) -> (Vec<String>, Vec<String>) {
+        let seen: Vec<(u8, u16)> = self.labels.keys().map(|(c, l, _)| (*c, *l)).collect();
+        let missing = defs
+            .iter()
+            .filter(|d| {
+                let Ok(l) = u16::from_str_radix(&d.label, 8) else { return true };
+                !seen.iter().any(|(c, sl)| *sl == l && d.channel.is_none_or(|dc| dc == *c))
+            })
+            .map(|d| format!("{} ({})", d.label, d.param))
+            .collect();
+        let extra = self
+            .labels
+            .keys()
+            .filter(|(c, l, _)| {
+                !defs.iter().any(|d| {
+                    u16::from_str_radix(&d.label, 8).ok() == Some(*l) && d.channel.is_none_or(|dc| dc == *c)
+                })
+            })
+            .map(|(c, l, s)| format!("ch{c} {l:03o} sdi{s}"))
+            .collect();
+        (missing, extra)
+    }
+}
+
+#[cfg(test)]
+mod survey_tests {
+    use super::*;
+
+    #[test]
+    fn survey_counts_rates_and_compares() {
+        let mut s = Survey::default();
+        for i in 0..21 {
+            let t = i as f64 * 0.1; // 10 Hz
+            s.feed(0, Word::encode_bnr(0o312, 0, 100.0 + i as f64, 4096.0, 15, Ssm::Normal), t);
+            if i % 10 == 0 {
+                s.feed(1, Word::encode_bnr(0o377, 0, 1.0, 2.0, 1, Ssm::NoComputedData), t);
+            }
+        }
+        let gs = s.labels[&(0, 0o312, 0)];
+        assert_eq!(gs.count, 21);
+        assert!((gs.rate_hz() - 10.0).abs() < 1e-6);
+        assert_eq!(gs.ssm[0b11], 21);
+        assert!(gs.max_raw > gs.min_raw);
+        let (missing, extra) = s.compare(&default_labels());
+        assert!(missing.iter().any(|m| m.starts_with("310")));
+        assert!(!missing.iter().any(|m| m.starts_with("312")));
+        assert_eq!(extra, vec!["ch1 377 sdi0".to_string()]);
     }
 }

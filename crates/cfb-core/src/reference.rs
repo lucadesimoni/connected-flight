@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Reference selection and cross-check.
 //!
 //! Each quantity comes from the best source that is fitted and valid right

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary and confidential. See LICENSE.
+
 //! Compact binary framing for paid-per-byte links (satcom).
 //!
 //! A position report as JSON is ~150 bytes; as a frame here it is 30 bytes.
