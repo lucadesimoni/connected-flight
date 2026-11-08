@@ -1,7 +1,8 @@
 # Notices
 
-**Connected Flight Box (CFB)**: Copyright © 2026 Outthinkx by Luca De Simoni.
-All rights reserved. Proprietary; see [LICENSE](LICENSE).
+**Connected Flight Box (CFB)**: Copyright © 2026 Luca De Simoni, trading as
+Outthinkx. All rights reserved. Proprietary software, not open source; the
+source may be publicly visible for viewing only. See [LICENSE](LICENSE).
 
 ## Third-party trademarks
 

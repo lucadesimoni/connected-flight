@@ -1,5 +1,7 @@
 # 04 – Software Architecture
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 ## Stack
 
 | Layer | Choice | Why |

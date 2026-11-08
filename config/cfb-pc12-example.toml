@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
 # Connected Flight Box - installed configuration: PC-12-class turboprop (EXAMPLE)
 # 5G + Starlink (LEO) + Iridium, ARINC 429 from the avionics, edge apps, OTA.
 # ARINC label numbers for engine data are ILLUSTRATIVE: take every label from

@@ -1,11 +1,16 @@
 Connected Flight Box (CFB)
 Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
 
-PROPRIETARY AND CONFIDENTIAL
+PROPRIETARY SOFTWARE - ALL RIGHTS RESERVED - NOT OPEN SOURCE
 
 This software, its source code, documentation, designs, configurations,
 data formats and all related materials (the "Software") are the exclusive
-property of Outthinkx by Luca De Simoni ("Outthinkx").
+property of Luca De Simoni, trading as Outthinkx ("Outthinkx").
+
+The source code may be publicly visible (for example in a public
+repository). Visibility is for viewing only. It does not make the Software
+open source, does not grant any licence, and does not waive any right of
+Outthinkx.
 
 No licence or other right is granted to any person, by implication,
 estoppel or otherwise, except under a separate written licence agreement
@@ -15,8 +20,10 @@ aircraft, reverse engineer, decompile or disassemble the Software or any
 part of it, except to the extent that such restriction is prohibited by
 mandatory applicable law.
 
-Access to this repository or to any copy of the Software does not grant
-any licence and does not place the Software in the public domain.
+Access to this repository, a fork, a clone or any other copy of the
+Software does not grant any licence and does not place the Software in the
+public domain. Forks and copies made from a public repository remain
+subject to this notice.
 
 The Software is not approved for installation or use in any aircraft.
 Any airworthiness approval, design approval or installation is the

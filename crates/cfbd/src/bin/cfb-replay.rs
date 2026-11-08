@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
-// Proprietary and confidential. See LICENSE.
+// Proprietary software, not open source. See LICENSE.
 
 //! cfb-replay - run edge app packages over an existing avionics flight log
 //! (e.g. a Garmin-style CSV data log from the SD card), on the ground.

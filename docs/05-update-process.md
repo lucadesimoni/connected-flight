@@ -1,5 +1,7 @@
 # 05 – Field-Loadable Software Update Process
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 ## Release (design organisation)
 
 1. Change request → change classification (minor/major) under the DOA

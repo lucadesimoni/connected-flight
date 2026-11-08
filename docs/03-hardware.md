@@ -1,5 +1,7 @@
 # 03 – Hardware
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 ## Compute: Raspberry Pi 5 vs Compute Module 5
 
 | | Raspberry Pi 5 (board) | **Compute Module 5 on custom carrier** (production) |

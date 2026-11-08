@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
 [Unit]
 Description=Connected Flight Box daemon
 After=cfb-io.service

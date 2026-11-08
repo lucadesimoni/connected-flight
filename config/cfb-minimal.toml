@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
 # Connected Flight Box - minimal installed configuration (example)
 # No ARINC 429, no satcom: own GNSS + IMU, Wi-Fi and 4G on ground only.
 # Position reports are queued in flight and sent after landing.

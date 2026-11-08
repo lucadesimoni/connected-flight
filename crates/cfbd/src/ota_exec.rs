@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
-// Proprietary and confidential. See LICENSE.
+// Proprietary software, not open source. See LICENSE.
 
 //! Runs the commands of the OTA state machine (`cfb_core::ota`).
 //!

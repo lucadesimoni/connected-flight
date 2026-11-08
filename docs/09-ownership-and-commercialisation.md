@@ -1,6 +1,7 @@
 # 09 – Ownership, Protection and Commercialisation
 
-> Copyright © 2026 Outthinkx by Luca De Simoni. Proprietary.
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 > Practical checklist, **not legal advice**. Have a Swiss IP/commercial
 > lawyer review the points marked ⚖ before selling or licensing.
 
@@ -8,7 +9,7 @@
 
 | Item | Status |
 |---|---|
-| Copyright owner | **Outthinkx by Luca De Simoni**: `LICENSE` (proprietary, all rights reserved), headers in every source file, `authors` in `Cargo.toml` |
+| Copyright owner | **Luca De Simoni, trading as Outthinkx**: `LICENSE` (proprietary, all rights reserved, not open source; public visibility for viewing only), notice in every file, `authors` in `Cargo.toml` |
 | Licence | None granted. Use only under a written agreement with Outthinkx |
 | Not for publication | `publish = false` in Cargo (cannot be pushed to crates.io by mistake) |
 | Third-party code | Only permissive crates (MIT / Apache-2.0 / BSD-3 / Unicode / Unlicense): compatible with a closed product. Ship their notices (`NOTICE.md`, `cargo about`) |
@@ -16,7 +17,12 @@
 
 ## 2. Immediate actions
 
-1. **Make the GitHub repository private.** It is currently **public**.
+1. **Make the GitHub repository private** (planned). Until then the licence
+   says "publicly visible for viewing only, not open source", which keeps
+   copyright and contract claims intact. Trade-secret protection, however,
+   needs secrecy, so do not add new know-how (edge-app rule sets,
+   customer data, ICD-derived tables) while the repository is public.
+   It is currently **public**.
    While public, anyone can read the code and docs, and the trade-secret
    argument (secrecy) does not hold. GitHub → Settings → General → Danger
    Zone → Change visibility. The licence still forbids use, but secrecy is

@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
 [package]
 name = "cfb-core"
 description = "Connected Flight Box core logic: flight phase, link policy, store-and-forward, framing, update gating"

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
-// Proprietary and confidential. See LICENSE.
+// Proprietary software, not open source. See LICENSE.
 
 //! cfb-a429-survey - bench tool: which ARINC 429 labels are on the bus, at
 //! what rate, with which SSM, compared with the installation's label table.

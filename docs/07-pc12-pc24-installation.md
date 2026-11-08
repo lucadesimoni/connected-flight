@@ -1,5 +1,7 @@
 # 07 – Installation on Pilatus PC-12 and PC-24 (planning notes)
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 > Planning notes only. Each statement about the aircraft must be checked
 > against the TCDS, the aircraft's wiring/ICD data and the TC holder.
 > Nothing here is approved data.

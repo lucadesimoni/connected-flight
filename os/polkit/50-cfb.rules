@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+// Proprietary software, not open source. See LICENSE.
 // cfbd runs as the unprivileged user "cfb". It may ask the RAUC service to
 // install a bundle and logind to reboot - nothing else. The update gate in
 // cfbd decides *when*; RAUC still checks the bundle signature itself.

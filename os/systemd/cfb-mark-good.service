@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
 # Runs once after boot. If the new slot is healthy, mark it good; if this
 # never runs (crash, hang -> hardware watchdog reset), the boot counter runs
 # out and the bootloader falls back to the previous slot.

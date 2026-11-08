@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
 # Edge app package: turboprop operations monitoring (example).
 # A signed, versioned part: listed in the apps ASCI, signed with
 # `cfb-release sign <key> turboprop-ops.toml` -> turboprop-ops.toml.sig.

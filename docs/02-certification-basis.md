@@ -1,5 +1,7 @@
 # 02 – EASA Certification Strategy (CS-23)
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 > Engineering proposal, not an approved document. The certification basis,
 > change classification and DAL must be agreed with the approving
 > organisation (your DOA, or EASA) for each aircraft type.

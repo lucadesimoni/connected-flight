@@ -1,8 +1,9 @@
 # 08 – Getting Data out of Honeywell, Garmin and Other Avionics
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 > Research summary, November 2026. Public sources only; items marked
 > *unconfirmed* need checking against the manufacturer's current documents.
-> Copyright © 2026 Outthinkx by Luca De Simoni. Proprietary.
 
 ## 1. The data paths that exist on an aircraft
 

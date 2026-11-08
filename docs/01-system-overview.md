@@ -1,5 +1,7 @@
 # 01 – System Overview
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 ## Purpose
 
 The Connected Flight Box (CFB) is a small, low-power connectivity unit for

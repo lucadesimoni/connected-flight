@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
-// Proprietary and confidential. See LICENSE.
+// Proprietary software, not open source. See LICENSE.
 
 //! Flight data logs written by the avionics itself, e.g. the CSV data log
 //! that Garmin integrated flight decks (G1000 family) write to the SD card

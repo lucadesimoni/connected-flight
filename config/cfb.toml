@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
 # Connected Flight Box - installed configuration (example)
 # Lives on the read-only rootfs at /etc/cfb/cfb.toml.
 # Changes only through a signed configuration update.

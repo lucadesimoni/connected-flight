@@ -1,7 +1,9 @@
 # Connected Flight Box (CFB)
 
 **© 2026 Outthinkx by Luca De Simoni. All rights reserved.** Proprietary
-software; no licence is granted without a written agreement. See
+software, **not open source**. The code is publicly visible for viewing
+only; no licence to use, copy, modify or install it is granted without a
+written agreement with Outthinkx. See
 [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). Licensing: outthinkx@gmail.com
 
 A low-power connectivity unit for **EASA CS-23 aeroplanes** (Level 1–4), built

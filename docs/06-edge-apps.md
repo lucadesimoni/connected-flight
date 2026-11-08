@@ -1,5 +1,7 @@
 # 06 – Edge Apps (in-box computing)
 
+<sub>© 2026 Outthinkx by Luca De Simoni. All rights reserved. Proprietary, not open source. See [LICENSE](../LICENSE).</sub>
+
 ## Why
 
 A satcom link is expensive and slow, and raw data at 1–10 Hz is useless to

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
-// Proprietary and confidential. See LICENSE.
+// Proprietary software, not open source. See LICENSE.
 
 //! Scripted flight for `--simulate`. Produces the same raw inputs the real
 //! `cfb-io` would: ARINC 429 words, NMEA sentences, accelerometer samples,
