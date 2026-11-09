@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/cfb-core", "crates/cfb-drivers", "crates/cfbd"]
+members = ["crates/cfb-core", "crates/cfb-drivers", "crates/cfbd", "crates/cfb-maint", "crates/cfb-ground"]
 
 [workspace.package]
 version = "0.1.0"

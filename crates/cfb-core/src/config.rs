@@ -58,6 +58,21 @@ pub struct Config {
     /// for `iridium` in `[transport]`.
     #[serde(default)]
     pub sbd: Option<SbdConfig>,
+    #[serde(default)]
+    pub maintenance: MaintenanceConfig,
+}
+
+/// Status snapshot for the maintenance page (`cfb-maint`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceConfig {
+    /// Written once a second (tmpfs). Empty = off.
+    pub status_path: String,
+}
+
+impl Default for MaintenanceConfig {
+    fn default() -> Self {
+        Self { status_path: "/run/cfb/status.json".into() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

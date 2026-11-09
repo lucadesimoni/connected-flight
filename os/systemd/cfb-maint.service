@@ -1,0 +1,25 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+[Unit]
+Description=CFB maintenance page (read status, maintenance mode, install confirm)
+After=cfbd.service
+
+[Service]
+EnvironmentFile=/etc/cfb/maint.env
+ExecStart=/usr/local/bin/cfb-maint --listen ${CFB_MAINT_LISTEN} --token-file /etc/cfb/maint.token
+Restart=always
+RestartSec=2
+User=cfb
+Group=cfb
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# Only the discretes file (maint key) and the OTA confirm flag are written.
+ReadWritePaths=/run/cfb
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=32M
+
+[Install]
+WantedBy=multi-user.target

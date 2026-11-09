@@ -1,0 +1,16 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+[package]
+name = "cfb-ground"
+description = "Connected Flight Box ground service: receive, ack, store, SBD webhook, web view"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+cfb-core = { path = "../cfb-core" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+tiny_http = "0.12"

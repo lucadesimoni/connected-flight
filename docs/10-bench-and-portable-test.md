@@ -88,6 +88,19 @@ In `/etc/cfb/io.env`: `CFB_IMU_IIO=ism330dhcx`, `CFB_BARO_IIO=bmp`,
 | T23 | Iridium SBD | Modem with sky view, `[sbd]` configured; `wow=0` in the discretes file (airborne) | Position reports leave every interval via SBD (provider portal shows messages, ~2 frames per message); `cfb-ground --decode-sbd <hex>` decodes them |
 | T24 | SBD bad conditions | Cover the antenna | Signal < 2: frames held, no credits used; uncovered: they go out |
 
+### 3.2 Maintenance page
+
+The installer creates a random token in `/etc/cfb/maint.token` (show it
+with `sudo cat`); set the maintenance Ethernet address in
+`/etc/cfb/maint.env` (laptop on the same subnet).
+
+| # | Test | Steps | Expected |
+|---|---|---|---|
+| T25 | Status page | Open `http://<maint-address>:8080/` | Phase, position/altitude with sources, lights, faults, links, queue, OTA state, update gate; refreshes every 3 s |
+| T26 | Maintenance mode | Button with a wrong token, then the right one | Wrong: "Wrong token" after 1 s, nothing changes. Right: maintenance mode ON within a second; update gate shows the remaining blockers |
+| T27 | Install confirm | With a verified package waiting (T15) and the gate open | "Install confirmed"; OTA goes to Installing |
+| T28 | Not reachable elsewhere | From Wi-Fi / 4G / tunnel addresses | Connection refused (bound to the maintenance address only) |
+
 ## 4. Known limits of the bench unit
 
 * No hardware weight-on-wheels interlock: RF inhibit is software

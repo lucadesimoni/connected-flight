@@ -20,6 +20,7 @@
 mod input;
 mod ota_exec;
 mod sim;
+mod status_out;
 
 use cfb_core::arinc429::{Decoder, Ssm, Word};
 use cfb_core::edge::{AppPackage, DataView, EdgeRuntime, RuntimeEvent};
@@ -246,6 +247,8 @@ fn main() {
     let mut last_switch_off: Option<bool> = None;
     let mut pfail_since: Option<f64> = None;
     let mut powered_off = false;
+    let status_path = (!simulate && !cfg.maintenance.status_path.is_empty()).then(|| PathBuf::from(&cfg.maintenance.status_path));
+    let mut status_err_logged = false;
     let retry_s = cfg.transport.as_ref().map_or(15, |t| t.retry_s);
 
     // OTA.
@@ -705,6 +708,59 @@ fn main() {
             if name != last_ota_state {
                 out.event(t, MsgType::Health, Priority::Normal, format!("OTA {name}"));
                 last_ota_state = name;
+            }
+        }
+
+        // ---- status snapshot for the maintenance page
+        if let Some(p) = &status_path {
+            let snap = status_out::Snapshot {
+                unix_time: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                t,
+                version: env!("CARGO_PKG_VERSION").into(),
+                registration: cfg.aircraft.registration.clone(),
+                modules: m.expected_ids().iter().map(|s| s.to_string()).collect(),
+                phase: format!("{phase:?}"),
+                lat: r.pos.map(|p| p.0),
+                lon: r.pos.map(|p| p.1),
+                pos_source: format!("{:?}", r.pos_src),
+                alt_ft: r.alt_ft,
+                alt_source: format!("{:?}", r.alt_src),
+                gs_kt: r.gs_kt,
+                engine_running: r.engine_running,
+                engine_source: format!("{:?}", r.engine_src),
+                lights: [("green", lights.green), ("amber", lights.amber), ("red", lights.red)]
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), format!("{v:?}")))
+                    .collect(),
+                faults: faults.iter().map(|f| format!("{f:?}")).collect(),
+                rf_switch_off: switch_off,
+                power_fail: s.power_fail,
+                maintenance_mode: s.maintenance,
+                links: status
+                    .iter()
+                    .map(|l| status_out::LinkSnap {
+                        kind: format!("{:?}", l.kind),
+                        up: l.up,
+                        permitted: permitted(l.kind),
+                        detail: bearers.iter().find(|b| b.kind() == l.kind).map(|b| b.describe()).unwrap_or_default(),
+                    })
+                    .collect(),
+                queue_messages: out.queue.len(),
+                queue_bytes: out.queue.bytes(),
+                queue_max_bytes: cfg.queue.max_bytes,
+                queue_evicted: out.queue.evicted,
+                ota_state: ota_state_name(&ota.state),
+                update_gate: match gate.check_conditions(&st) {
+                    Ok(()) => "OPEN".into(),
+                    Err(e) => format!("blocked: {e:?}"),
+                },
+                edge_apps: edge.apps().into_iter().map(|(id, v, en)| format!("{id} {v} {}", if en { "running" } else { "DISABLED" })).collect(),
+            };
+            if let Err(e) = status_out::write(p, &snap) {
+                if !status_err_logged {
+                    eprintln!("cfbd: status snapshot {}: {e}", p.display());
+                    status_err_logged = true;
+                }
             }
         }
 

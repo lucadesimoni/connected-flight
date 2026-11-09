@@ -22,13 +22,20 @@ id cfb >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin
 getent group gpio >/dev/null || groupadd --system gpio
 usermod -aG dialout,gpio cfb
 
-install -m 755 target/release/cfbd target/release/cfb-io target/release/cfb-release /usr/local/bin/
+install -m 755 target/release/cfbd target/release/cfb-io target/release/cfb-release target/release/cfb-maint /usr/local/bin/
 install -d -m 755 /etc/cfb /etc/cfb/apps
 [ -f /etc/cfb/cfb.toml ] || install -m 644 config/cfb-bench-pi5.toml /etc/cfb/cfb.toml
 [ -f /etc/cfb/io.env ] || install -m 644 os/systemd/io.env /etc/cfb/io.env
 [ -f /etc/cfb/discretes.default ] || install -m 644 os/systemd/discretes.default /etc/cfb/discretes.default
+[ -f /etc/cfb/maint.env ] || install -m 644 os/systemd/maint.env /etc/cfb/maint.env
+if [ ! -f /etc/cfb/maint.token ]; then
+  # Random maintenance token, readable by the service only. Hand it to the
+  # technicians through your maintenance documentation, not in the clear.
+  head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/cfb/maint.token
+  chown root:cfb /etc/cfb/maint.token && chmod 640 /etc/cfb/maint.token
+fi
 install -m 644 os/systemd/cfb.tmpfiles.conf /etc/tmpfiles.d/cfb.conf
-install -m 644 os/systemd/cfbd.service os/systemd/cfb-mark-good.service /etc/systemd/system/
+install -m 644 os/systemd/cfbd.service os/systemd/cfb-mark-good.service os/systemd/cfb-maint.service /etc/systemd/system/
 install -d -m 755 /etc/polkit-1/rules.d
 install -m 644 os/polkit/50-cfb.rules /etc/polkit-1/rules.d/
 install -m 644 os/udev/90-cfb.rules /etc/udev/rules.d/
@@ -44,5 +51,5 @@ for t in wifi cell; do
     echo "note: /etc/wireguard/wg-$t.conf missing (scripts/make-wg.sh)"
   fi
 done
-systemctl enable cfbd.service
+systemctl enable cfbd.service cfb-maint.service
 echo "installed. Next: os/net/setup-networkmanager.sh, edit /etc/cfb/io.env, then: systemctl start cfbd; journalctl -fu cfbd"
