@@ -33,6 +33,7 @@ pub mod reference;
 pub mod sbd;
 pub mod status;
 pub mod update;
+pub mod urlenc;
 
 pub use config::Config;
 pub use frame::{Frame, MsgType, PositionReport};

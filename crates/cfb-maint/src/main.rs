@@ -15,6 +15,7 @@
 //! It never talks to radios, links or the update gate. Bind it to the
 //! maintenance Ethernet address only.
 
+use cfb_core::urlenc;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -54,34 +55,6 @@ fn token_ok(given: &str, expected: &str) -> bool {
         diff |= (*a.get(i).unwrap_or(&0) ^ *b.get(i).unwrap_or(&0)) as usize;
     }
     diff == 0
-}
-
-/// Minimal application/x-www-form-urlencoded parser.
-fn form(body: &str) -> Vec<(String, String)> {
-    fn dec(s: &str) -> String {
-        let b = s.as_bytes();
-        let mut out = Vec::with_capacity(b.len());
-        let mut i = 0;
-        while i < b.len() {
-            match b[i] {
-                b'+' => out.push(b' '),
-                b'%' => {
-                    let hex = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok());
-                    match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                        Some(v) => {
-                            out.push(v);
-                            i += 2;
-                        }
-                        None => out.push(b'%'),
-                    }
-                }
-                c => out.push(c),
-            }
-            i += 1;
-        }
-        String::from_utf8_lossy(&out).into_owned()
-    }
-    body.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (dec(k), dec(v))).collect()
 }
 
 /// Set `maint=0|1` in the discretes file, keep every other key as it is.
@@ -214,8 +187,8 @@ fn handle(method: &Method, url: &str, body: &str, token: &str, p: &Paths) -> (u1
         (Method::Get, "/") => (200, page(&status, "")),
         (Method::Get, "/status.json") => (200, status.to_string()),
         (Method::Post, "/maint") | (Method::Post, "/confirm") => {
-            let f = form(body);
-            let get = |k: &str| f.iter().find(|(x, _)| x == k).map(|(_, v)| v.as_str()).unwrap_or("");
+            let f = urlenc::parse_form(body);
+            let get = |k: &str| urlenc::get(&f, k);
             if !token_ok(get("token"), token) {
                 std::thread::sleep(Duration::from_secs(1)); // slow down guessing
                 return (403, page(&status, "Wrong token."));
@@ -314,14 +287,6 @@ mod tests {
         assert!(!token_ok("secret12", "secret123"));
         assert!(!token_ok("", ""), "empty expected token never matches");
         assert!(!token_ok("secret124", "secret123"));
-    }
-
-    #[test]
-    fn form_decoding() {
-        let f = form("token=a%2Bb+c&on=1&x=%zz");
-        assert_eq!(f[0], ("token".into(), "a+b c".into()));
-        assert_eq!(f[1], ("on".into(), "1".into()));
-        assert_eq!(f[2], ("x".into(), "%zz".into()));
     }
 
     #[test]

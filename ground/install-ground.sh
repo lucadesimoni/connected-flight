@@ -13,8 +13,17 @@ apt-get install -y wireguard-tools python3
 install -m 600 "$WG" /etc/wireguard/wg0.conf
 install -m 755 target/release/cfb-ground /usr/local/bin/
 install -d -m 755 /srv/cfb
+install -d -m 755 /etc/cfb-ground
+for t in view webhook; do
+  if [ ! -f /etc/cfb-ground/$t.token ]; then
+    head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/cfb-ground/$t.token
+    chmod 644 /etc/cfb-ground/$t.token   # DynamicUser must read it; the directory is root-owned
+  fi
+done
 install -m 644 ground/cfb-ground.service ground/cfb-ota-http.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now wg-quick@wg0 cfb-ground cfb-ota-http
 echo "Open UDP 51820 in the firewall (only that port needs to be public)."
-echo "Log: /var/lib/cfb-ground/rx.log   Live: journalctl -fu cfb-ground"
+echo "Web (localhost): http://127.0.0.1:8090/?token=\$(cat /etc/cfb-ground/view.token)"
+echo "SBD webhook URL for the provider (via your TLS proxy): https://<host>/sbd?token=\$(cat /etc/cfb-ground/webhook.token)"
+echo "Database: /var/lib/cfb-ground/cfb.db   Log: /var/lib/cfb-ground/rx.log   Live: journalctl -fu cfb-ground"

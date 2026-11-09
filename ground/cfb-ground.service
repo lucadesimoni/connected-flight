@@ -1,12 +1,14 @@
 # Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
 # Proprietary software, not open source. See LICENSE.
 [Unit]
-Description=CFB ground service (receive, ack, store)
+Description=CFB ground service (receive, ack, store, web, SBD webhook)
 After=wg-quick@wg0.service
 Requires=wg-quick@wg0.service
 
 [Service]
-ExecStart=/usr/local/bin/cfb-ground --listen 10.66.0.1:7400 --log /var/lib/cfb-ground/rx.log
+# UDP inside the tunnel; web on localhost (put a TLS reverse proxy such as
+# Caddy or nginx in front to publish it, incl. the SBD webhook URL).
+ExecStart=/usr/local/bin/cfb-ground --listen 10.66.0.1:7400 --db /var/lib/cfb-ground/cfb.db --http 127.0.0.1:8090 --view-token-file /etc/cfb-ground/view.token --webhook-token-file /etc/cfb-ground/webhook.token --log /var/lib/cfb-ground/rx.log
 DynamicUser=yes
 StateDirectory=cfb-ground
 Restart=always
@@ -14,6 +16,7 @@ RestartSec=2
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
+MemoryMax=256M
 
 [Install]
 WantedBy=multi-user.target

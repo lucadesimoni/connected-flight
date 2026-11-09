@@ -143,5 +143,6 @@ fn text_formats_never_panic() {
         let _ = AppPackage::parse(&r.mutate(app.as_bytes()));
         let t = if i.is_multiple_of(2) { r.text(200) } else { String::from_utf8_lossy(&r.mutate(csv.as_bytes())).into_owned() };
         let _ = parse_csv(&t, GARMIN_DEFAULT_MAP);
+        let _ = cfb_core::urlenc::parse_form(&t);
     }
 }

@@ -82,6 +82,7 @@ dependencies = [
 name = "cfb-maint"
 version = "0.1.0"
 dependencies = [
+ "cfb-core",
  "serde_json",
  "tiny_http",
 ]
