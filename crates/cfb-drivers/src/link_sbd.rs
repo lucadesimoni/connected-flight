@@ -225,16 +225,17 @@ struct Shared {
 
 type Opener<P> = Box<dyn Fn() -> io::Result<P> + Send>;
 
-fn worker<P: Read + Write>(
-    open: Opener<P>,
+/// The worker's connections to the link: frames in, acks and MT out,
+/// shared health state.
+struct WorkerChannels {
     jobs: Receiver<(u64, Vec<u8>)>,
     acks: Sender<Vec<u64>>,
     uplinks: Sender<Vec<u8>>,
     shared: Arc<Mutex<Shared>>,
-    min_signal: u8,
-    max_mo: usize,
-    tm: SbdTiming,
-) {
+}
+
+fn worker<P: Read + Write>(open: Opener<P>, ch: WorkerChannels, min_signal: u8, max_mo: usize, tm: SbdTiming) {
+    let WorkerChannels { jobs, acks, uplinks, shared } = ch;
     let mut mt_waiting: u32 = 0;
     let mut last_mt_check = Instant::now();
     let mut pending: Vec<(u64, Vec<u8>)> = Vec::new();
@@ -377,7 +378,8 @@ impl SbdLink {
         let (utx, urx) = channel();
         let shared = Arc::new(Mutex::new(Shared::default()));
         let s2 = shared.clone();
-        std::thread::spawn(move || worker(open, jrx, atx, utx, s2, min_signal, max_mo, tm));
+        let ch = WorkerChannels { jobs: jrx, acks: atx, uplinks: utx, shared: s2 };
+        std::thread::spawn(move || worker(open, ch, min_signal, max_mo, tm));
         Self { jobs: jtx, acks: arx, uplinks: urx, shared, inflight: HashMap::new(), min_signal, max_mo }
     }
 }
