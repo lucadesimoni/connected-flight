@@ -14,6 +14,9 @@
 //! Iridium SBD messages arrive from the service provider (usually as hex in
 //! an HTTP POST); decode one with
 //!   cfb-ground --decode-sbd <hex>
+//! and build a text message to the aircraft (MT, to submit through the
+//! provider's API, max 270 bytes) with
+//!   cfb-ground --encode-sbd "OTA AVAILABLE\"
 
 use cfb_core::frame::{encode_ack, Frame, MsgType, EPOCH_2020};
 use cfb_core::PositionReport;
@@ -35,6 +38,17 @@ fn describe(f: &Frame) -> String {
         MsgType::FileChunk => format!("{} bytes", f.payload.len()),
         _ => String::from_utf8_lossy(&f.payload).into_owned(),
     }
+}
+
+/// Build an MT payload (hex) carrying one text frame.
+fn encode_sbd(text: &str) -> Result<String, String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let f = Frame { msg_type: MsgType::Text, seq: 0, time: now.saturating_sub(EPOCH_2020) as u32, payload: text.as_bytes().to_vec() }.encode();
+    let (p, ids) = cfb_core::sbd::pack([(0, &f[..])], 270);
+    if ids.is_empty() {
+        return Err("text too long for one MT message".into());
+    }
+    Ok(p.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Decode one SBD message (hex) into frame descriptions.
@@ -60,6 +74,16 @@ fn main() {
             "--listen" => listen = args.next().unwrap_or(listen),
             "--announce-ota" => announce = true,
             "--log" => log_path = args.next(),
+            "--encode-sbd" => {
+                match encode_sbd(&args.next().unwrap_or_default()) {
+                    Ok(h) => println!("{h}"),
+                    Err(e) => {
+                        eprintln!("cfb-ground: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
             "--decode-sbd" => {
                 match decode_sbd(&args.next().unwrap_or_default()) {
                     Ok(lines) => lines.iter().for_each(|l| println!("{l}")),
@@ -152,5 +176,8 @@ mod tests {
         assert!(lines[0].contains("47.00000,8.30000 8500ft 140kt"), "{}", lines[0]);
         assert!(lines[1].ends_with("Text: HELLO"), "{}", lines[1]);
         assert!(decode_sbd("zz").is_err());
+        let h = encode_sbd("OTA AVAILABLE").unwrap();
+        assert!(decode_sbd(&h).unwrap()[0].ends_with("Text: OTA AVAILABLE"));
+        assert!(encode_sbd(&"x".repeat(300)).is_err());
     }
 }

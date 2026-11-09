@@ -12,10 +12,14 @@
 //! * [`SbdLink`]: the [`LinkDriver`] the daemon sees. "Acked" means the MO
 //!   message reached the Iridium gateway (`+SBDIX` MO status 0–4).
 //!
-//! Not yet: reading mobile-terminated (uplink) messages (`AT+SBDRB`);
-//! they stay queued at the gateway.
+//! Mobile-terminated (uplink) messages are read whenever a session reports
+//! one waiting (`AT+SBDRB`), and further sessions run while the gateway
+//! reports more queued. Pure mailbox checks (no MO data) are optional
+//! (`SbdTiming::mt_check_every`), since they cost airtime.
+//! The ground side builds MT payloads with `cfb-ground --encode-sbd`.
 
 use crate::link::{LinkDriver, Rx};
+use cfb_core::frame::Frame;
 use cfb_core::sbd::{checksum, pack, parse_csq, parse_sbdix, Sbdix};
 use cfb_core::{LinkKind, LinkStatus};
 use std::collections::HashMap;
@@ -101,24 +105,81 @@ impl<P: Read + Write> Modem<P> {
         l.iter().find_map(|x| parse_csq(x)).ok_or_else(|| io::Error::other("no +CSQ"))
     }
 
-    /// Write the MO buffer, run a session, clear the buffer on success.
-    pub fn send_mo(&mut self, payload: &[u8]) -> io::Result<Sbdix> {
-        let c = format!("AT+SBDWB={}", payload.len());
-        self.cmd(&c, &["READY"], Duration::from_secs(5))?;
-        self.port.write_all(payload)?;
-        self.port.write_all(&checksum(payload))?;
+    /// Read exactly `n` bytes (binary responses), buffer first.
+    fn read_exact_until(&mut self, n: usize, deadline: Instant) -> io::Result<Vec<u8>> {
+        while self.buf.len() < n {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "binary read timeout"));
+            }
+            let mut tmp = [0u8; 512];
+            let k = self.port.read(&mut tmp)?;
+            if k == 0 {
+                std::thread::sleep(self.tick.min(Duration::from_millis(50)));
+            }
+            self.buf.extend_from_slice(&tmp[..k]);
+        }
+        Ok(self.buf.drain(..n).collect())
+    }
+
+    /// Read the MT buffer: `<len u16 BE><message><checksum u16 BE>` then OK.
+    pub fn read_mt(&mut self) -> io::Result<Vec<u8>> {
+        // Drop line remainders left from the SBDIX response.
+        while matches!(self.buf.first(), Some(b'\r' | b'\n')) {
+            self.buf.remove(0);
+        }
+        self.port.write_all(b"AT+SBDRB\r")?;
         self.port.flush()?;
-        let l = self.collect("", &["OK"], Duration::from_secs(10))?;
-        match l.first().map(String::as_str) {
-            Some("0") => {}
-            other => return Err(io::Error::other(format!("SBDWB rejected: {other:?}"))),
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let hdr = self.read_exact_until(2, deadline)?;
+        let len = u16::from_be_bytes([hdr[0], hdr[1]]) as usize;
+        if len > 270 {
+            return Err(io::Error::other(format!("MT length {len} > 270")));
+        }
+        let body = self.read_exact_until(len, deadline)?;
+        let cs = self.read_exact_until(2, deadline)?;
+        self.collect("AT+SBDRB", &["OK"], Duration::from_secs(5))?;
+        if checksum(&body) != [cs[0], cs[1]] {
+            return Err(io::Error::other("MT checksum mismatch"));
+        }
+        Ok(body)
+    }
+
+    /// One SBD session. With `payload`: write the MO buffer first and clear
+    /// it after gateway success. Without: clear the MO buffer and only check
+    /// the mailbox. Returns the session result and an MT message if one came.
+    pub fn session(&mut self, payload: Option<&[u8]>) -> io::Result<(Sbdix, Option<Vec<u8>>)> {
+        match payload {
+            Some(p) => {
+                let c = format!("AT+SBDWB={}", p.len());
+                self.cmd(&c, &["READY"], Duration::from_secs(5))?;
+                self.port.write_all(p)?;
+                self.port.write_all(&checksum(p))?;
+                self.port.flush()?;
+                let l = self.collect("", &["OK"], Duration::from_secs(10))?;
+                match l.first().map(String::as_str) {
+                    Some("0") => {}
+                    other => return Err(io::Error::other(format!("SBDWB rejected: {other:?}"))),
+                }
+            }
+            None => {
+                // Never resend an old MO message on a mailbox check.
+                self.cmd("AT+SBDD0", &["OK"], Duration::from_secs(5))?;
+            }
         }
         let l = self.cmd("AT+SBDIX", &["OK"], Duration::from_secs(90))?;
         let r = l.iter().find_map(|x| parse_sbdix(x)).ok_or_else(|| io::Error::other("no +SBDIX"))?;
-        if r.mo_ok() {
+        if payload.is_some() && r.mo_ok() {
             let _ = self.cmd("AT+SBDD0", &["OK"], Duration::from_secs(5));
         }
-        Ok(r)
+        // An MT read error loses that message (the next SBDIX overwrites
+        // the MT buffer) but must not turn a delivered MO into a failure.
+        let mt = if r.mt_status == 1 { self.read_mt().ok() } else { None };
+        Ok((r, mt))
+    }
+
+    /// Write the MO buffer, run a session, clear the buffer on success.
+    pub fn send_mo(&mut self, payload: &[u8]) -> io::Result<Sbdix> {
+        self.session(Some(payload)).map(|(r, _)| r)
     }
 }
 
@@ -134,6 +195,9 @@ pub struct SbdTiming {
     pub signal_every: Duration,
     /// Port read timeout (stty `time`).
     pub port_tick: Duration,
+    /// Mailbox check without MO data; `None` = only piggyback on MO
+    /// sessions (no extra airtime).
+    pub mt_check_every: Option<Duration>,
 }
 
 impl Default for SbdTiming {
@@ -144,6 +208,7 @@ impl Default for SbdTiming {
             backoff_max: Duration::from_secs(300),
             signal_every: Duration::from_secs(60),
             port_tick: Duration::from_secs(1),
+            mt_check_every: None,
         }
     }
 }
@@ -154,6 +219,7 @@ struct Shared {
     consecutive_failures: u32,
     sessions_ok: u64,
     sessions_failed: u64,
+    mt_received: u64,
     last_error: Option<String>,
 }
 
@@ -163,11 +229,14 @@ fn worker<P: Read + Write>(
     open: Opener<P>,
     jobs: Receiver<(u64, Vec<u8>)>,
     acks: Sender<Vec<u64>>,
+    uplinks: Sender<Vec<u8>>,
     shared: Arc<Mutex<Shared>>,
     min_signal: u8,
     max_mo: usize,
     tm: SbdTiming,
 ) {
+    let mut mt_waiting: u32 = 0;
+    let mut last_mt_check = Instant::now();
     let mut pending: Vec<(u64, Vec<u8>)> = Vec::new();
     let mut modem: Option<Modem<P>> = None;
     let mut backoff = tm.backoff_min;
@@ -210,7 +279,8 @@ fn worker<P: Read + Write>(
             }
         }
         let m = modem.as_mut().unwrap();
-        if pending.is_empty() {
+        let want_mt = mt_waiting > 0 || tm.mt_check_every.is_some_and(|d| last_mt_check.elapsed() >= d);
+        if pending.is_empty() && !want_mt {
             if last_signal.elapsed() >= tm.signal_every {
                 last_signal = Instant::now();
                 match m.signal() {
@@ -235,24 +305,35 @@ fn worker<P: Read + Write>(
             continue;
         }
         let (payload, ids) = pack(pending.iter().map(|(i, f)| (*i, f.as_slice())), max_mo);
-        if ids.is_empty() {
+        if ids.is_empty() && !pending.is_empty() {
             pending.clear(); // only unpackable frames: drop (link refuses them up front)
             continue;
         }
-        match m.send_mo(&payload) {
-            Ok(r) if r.mo_ok() => {
-                pending.retain(|(i, _)| !ids.contains(i));
-                let mut g = shared.lock().unwrap();
-                g.consecutive_failures = 0;
-                g.sessions_ok += 1;
-                drop(g);
-                let _ = acks.send(ids);
-                backoff = tm.backoff_min;
-            }
-            Ok(r) => {
-                fail(&shared, format!("SBDIX MO status {}", r.mo_status));
-                not_before = Instant::now() + backoff;
-                backoff = (backoff * 2).min(tm.backoff_max);
+        let mo = (!ids.is_empty()).then_some(payload.as_slice());
+        match m.session(mo) {
+            Ok((r, mt)) => {
+                last_mt_check = Instant::now();
+                mt_waiting = r.mt_queued;
+                if let Some(b) = mt {
+                    shared.lock().unwrap().mt_received += 1;
+                    let _ = uplinks.send(b);
+                }
+                // MO: success = gateway took it. Mailbox only: MT status 2 = error.
+                let ok = if mo.is_some() { r.mo_ok() } else { r.mt_status != 2 };
+                if ok {
+                    if mo.is_some() {
+                        pending.retain(|(i, _)| !ids.contains(i));
+                        let _ = acks.send(ids);
+                    }
+                    let mut g = shared.lock().unwrap();
+                    g.consecutive_failures = 0;
+                    g.sessions_ok += 1;
+                    backoff = tm.backoff_min;
+                } else {
+                    fail(&shared, format!("SBDIX MO status {} MT status {}", r.mo_status, r.mt_status));
+                    not_before = Instant::now() + backoff;
+                    backoff = (backoff * 2).min(tm.backoff_max);
+                }
             }
             Err(e) => {
                 fail(&shared, e.to_string());
@@ -269,6 +350,7 @@ fn worker<P: Read + Write>(
 pub struct SbdLink {
     jobs: Sender<(u64, Vec<u8>)>,
     acks: Receiver<Vec<u64>>,
+    uplinks: Receiver<Vec<u8>>,
     shared: Arc<Mutex<Shared>>,
     /// Message ids handed to the worker and not yet acked, with sizes.
     inflight: HashMap<u64, usize>,
@@ -292,10 +374,11 @@ impl SbdLink {
     ) -> Self {
         let (jtx, jrx) = channel();
         let (atx, arx) = channel();
+        let (utx, urx) = channel();
         let shared = Arc::new(Mutex::new(Shared::default()));
         let s2 = shared.clone();
-        std::thread::spawn(move || worker(open, jrx, atx, s2, min_signal, max_mo, tm));
-        Self { jobs: jtx, acks: arx, shared, inflight: HashMap::new(), min_signal, max_mo }
+        std::thread::spawn(move || worker(open, jrx, atx, utx, s2, min_signal, max_mo, tm));
+        Self { jobs: jtx, acks: arx, uplinks: urx, shared, inflight: HashMap::new(), min_signal, max_mo }
     }
 }
 
@@ -338,14 +421,20 @@ impl LinkDriver for SbdLink {
                 out.push(Rx::Acked(id));
             }
         }
+        // MT messages: same batch format as MO; bad content is dropped.
+        while let Ok(mt) = self.uplinks.try_recv() {
+            if let Ok(frames) = cfb_core::sbd::unpack(&mt) {
+                out.extend(frames.into_iter().filter_map(|b| Frame::decode(b).ok()).map(Rx::Uplink));
+            }
+        }
         out
     }
 
     fn describe(&self) -> String {
         let g = self.shared.lock().unwrap();
         format!(
-            "Iridium SBD signal={:?} ok={} failed={} inflight={} last_error={:?}",
-            g.signal, g.sessions_ok, g.sessions_failed, self.inflight.len(), g.last_error
+            "Iridium SBD signal={:?} ok={} failed={} mt={} inflight={} last_error={:?}",
+            g.signal, g.sessions_ok, g.sessions_failed, g.mt_received, self.inflight.len(), g.last_error
         )
     }
 }
@@ -371,6 +460,9 @@ mod tests {
         momsn: u32,
         delivered: Vec<Vec<u8>>,
         buffer: Vec<u8>,
+        mt_queue: VecDeque<Vec<u8>>,
+        mt_buf: Vec<u8>,
+        sessions: u32,
     }
 
     impl FakeModem {
@@ -385,6 +477,9 @@ mod tests {
                 momsn: 0,
                 delivered: vec![],
                 buffer: vec![],
+                mt_queue: VecDeque::new(),
+                mt_buf: vec![],
+                sessions: 0,
             })))
         }
     }
@@ -433,13 +528,34 @@ mod tests {
                         "AT+CSQ" => format!("\r\n+CSQ:{}\r\n\r\nOK\r\n", s.csq).into_bytes(),
                         "AT+SBDIX" => {
                             s.momsn += 1;
-                            if s.mo_status <= 4 {
+                            s.sessions += 1;
+                            if s.mo_status <= 4 && !s.buffer.is_empty() {
                                 let b = s.buffer.clone();
                                 s.delivered.push(b);
                             }
-                            format!("\r\n+SBDIX: {}, {}, 0, 0, 0, 0\r\n\r\nOK\r\n", s.mo_status, s.momsn).into_bytes()
+                            let (mt_status, mt_len) = match s.mt_queue.pop_front() {
+                                Some(m) => {
+                                    let n = m.len();
+                                    s.mt_buf = m;
+                                    (1, n)
+                                }
+                                None => (0, 0),
+                            };
+                            let q = s.mt_queue.len();
+                            format!("\r\n+SBDIX: {}, {}, {mt_status}, 1, {mt_len}, {q}\r\n\r\nOK\r\n", s.mo_status, s.momsn).into_bytes()
                         }
-                        "AT+SBDD0" => b"\r\n0\r\n\r\nOK\r\n".to_vec(),
+                        "AT+SBDRB" => {
+                            let m = s.mt_buf.clone();
+                            let mut v = (m.len() as u16).to_be_bytes().to_vec();
+                            v.extend_from_slice(&m);
+                            v.extend_from_slice(&checksum(&m));
+                            v.extend_from_slice(b"\r\nOK\r\n");
+                            v
+                        }
+                        "AT+SBDD0" => {
+                            s.buffer.clear();
+                            b"\r\n0\r\n\r\nOK\r\n".to_vec()
+                        }
                         _ => b"\r\nOK\r\n".to_vec(),
                     }
                 };
@@ -459,7 +575,51 @@ mod tests {
             backoff_max: Duration::from_millis(100),
             signal_every: Duration::from_millis(50),
             port_tick: Duration::from_millis(1),
+            mt_check_every: None,
         }
+    }
+
+    fn mt_text(seq: u16, text: &str) -> Vec<u8> {
+        let f = Frame { msg_type: cfb_core::frame::MsgType::Text, seq, time: 0, payload: text.as_bytes().to_vec() }.encode();
+        pack([(0, &f[..])], 270).0
+    }
+
+    #[test]
+    fn modem_reads_mt_after_session() {
+        let fake = FakeModem::new(4, 0);
+        fake.0.lock().unwrap().mt_queue.push_back(b"\x03abc".to_vec());
+        let mut m = Modem::new(fake.clone(), Duration::from_millis(1));
+        m.init().unwrap();
+        let (r, mt) = m.session(Some(b"\x01Z")).unwrap();
+        assert!(r.mo_ok());
+        assert_eq!(mt.as_deref(), Some(&b"\x03abc"[..]));
+    }
+
+    #[test]
+    fn mt_messages_arrive_as_uplink_and_queue_is_drained() {
+        let fake = FakeModem::new(4, 0);
+        {
+            let mut s = fake.0.lock().unwrap();
+            s.mt_queue.push_back(mt_text(1, "OTA AVAILABLE"));
+            s.mt_queue.push_back(mt_text(2, "HELLO"));
+        }
+        let f2 = fake.clone();
+        let mut link = SbdLink::with_opener(Box::new(move || Ok(f2.clone())), 2, 340, fast());
+        link.send(&[0xCF; 30], 1, 0.0).unwrap();
+        let mut texts = Vec::new();
+        let t0 = Instant::now();
+        while texts.len() < 2 && t0.elapsed() < Duration::from_secs(5) {
+            for r in link.poll(0.0) {
+                if let Rx::Uplink(f) = r {
+                    texts.push(String::from_utf8(f.payload).unwrap());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(texts, vec!["OTA AVAILABLE".to_string(), "HELLO".to_string()]);
+        let s = fake.0.lock().unwrap();
+        assert_eq!(s.delivered.len(), 1, "MO sent once; second session is a mailbox check");
+        assert!(s.sessions >= 2);
     }
 
     #[test]
