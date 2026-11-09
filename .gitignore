@@ -2,3 +2,8 @@
 # Proprietary software, not open source. See LICENSE.
 /target
 *.swp
+
+# Yocto: development keys and staged binaries are never committed
+os/yocto/keys/
+os/yocto/meta-cfb/recipes-cfb/cfb-bin/files/
+os/yocto/build/

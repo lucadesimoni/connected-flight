@@ -177,7 +177,12 @@ cfb-release verify <pubkey-hex> manifest.toml
 | OTA state machine + executor (curl, verify, rauc, deferred reboot) | Done; tested in simulation; real RAUC/curl on target to do |
 | Bench networking: WireGuard per bearer, policy routing, NetworkManager, RF inhibit commands, cfb-io, installers | Done; chain tested on localhost; **on a real Pi 5: to test (docs/10)** |
 | Portable kit software: IMU + barometer (IIO), radio switch, power-fail shutdown, status LEDs, Iridium SBD driver, device-tree/udev files | Done; tested with fake sensors/modem; **on hardware: docs/10 T17–T24** |
-| Production ground service (database, dedup, users, SBD webhook), RAUC A/B image | **To do** |
+| Ground service: SQLite store with dedup, web view with map, JSON API, Iridium SBD webhook | Done; tested end-to-end on localhost |
+| Maintenance page (separate process, token-protected actions) | Done; tested end-to-end |
+| Security/robustness review (6 findings fixed), robustness test suite | Done (docs/13) |
+| Certification evidence in CI (trace matrix, SCI); plan drafts (docs/cert) | Done; plans need the DOA partner |
+| RAUC A/B system image (Yocto Scarthgap, os/yocto) | **Written, not yet built** (needs a build machine) |
+| Ground service for production: user accounts, retention, alerting, file reassembly | **To do** |
 | Starlink terminal installation approval per type | **To do** (outside the box) |
 | Yocto/Buildroot image, secure boot, dm-verity | **To do** (RAUC + units provided) |
 | Carrier board, enclosure, DO-160G tests | **To do** |

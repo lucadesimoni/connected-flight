@@ -50,8 +50,8 @@ the next number.
 
 1. Set the system time from GNSS before the first frame of a flight (frame
    time stamps today come from the system clock / RTC).
-2. Secure boot and dm-verity in the OS image (`os/yocto`, item for the RAUC
-   image).
+2. Secure boot, dm-verity and a read-only root filesystem in the OS image
+   (`os/yocto/README.md`, next steps; A/B + signed bundles are in place).
 3. Rate limiting on the ground HTTP endpoints (put a reverse proxy in front in
    production).
 4. Periodic dependency audit (`cargo audit` in CI once network access is

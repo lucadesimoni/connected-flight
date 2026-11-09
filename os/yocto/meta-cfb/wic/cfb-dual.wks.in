@@ -1,0 +1,10 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+# p1 boot (FAT), p2 rootfs A, p3 rootfs B, p4 data (queue, updates, keys).
+# Device names match os/rauc/system.conf (mmcblk0 = SD card or CM5 eMMC;
+# adapt for NVMe: nvme0n1p2/p3).
+part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 128
+part /     --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfsA --align 4096 --fixed-size 1536M
+part       --source rootfs --ondisk mmcblk0 --fstype=ext4 --label rootfsB --align 4096 --fixed-size 1536M
+part /data --ondisk mmcblk0 --fstype=ext4 --label data --align 4096 --size 1024 --fsoptions "defaults,noatime,commit=60"
+bootloader --ptable msdos

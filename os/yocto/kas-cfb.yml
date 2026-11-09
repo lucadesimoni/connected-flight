@@ -1,0 +1,74 @@
+# Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
+# Proprietary software, not open source. See LICENSE.
+#
+# CFB system image: Yocto Scarthgap (5.0 LTS) for Raspberry Pi 5 / CM5,
+# A/B root filesystems with RAUC and U-Boot boot counting.
+# UNTESTED STARTING POINT - see os/yocto/README.md.
+#
+#   pip install kas
+#   scripts/yocto-stage-binaries.sh <dir with aarch64 binaries from CI>
+#   kas build os/yocto/kas-cfb.yml                       # image (.wic)
+#   kas build os/yocto/kas-cfb.yml --target cfb-bundle   # RAUC bundle (.raucb)
+#
+# Pin every repo to a commit ("commit:") for a release: reproducibility is
+# part of the configuration index.
+
+header:
+  version: 14
+
+machine: raspberrypi5
+distro: poky
+target: cfb-image
+
+repos:
+  meta-cfb:
+    path: os/yocto/meta-cfb
+  poky:
+    url: https://git.yoctoproject.org/poky
+    branch: scarthgap
+    layers:
+      meta:
+      meta-poky:
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    branch: scarthgap
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+  meta-raspberrypi:
+    url: https://git.yoctoproject.org/meta-raspberrypi
+    branch: scarthgap
+  meta-rauc:
+    url: https://github.com/rauc/meta-rauc.git
+    branch: scarthgap
+  meta-rauc-community:
+    url: https://github.com/rauc/meta-rauc-community.git
+    branch: scarthgap
+    layers:
+      meta-rauc-raspberrypi:
+
+local_conf_header:
+  cfb: |
+    INIT_MANAGER = "systemd"
+    DISTRO_FEATURES:append = " rauc wifi systemd usrmerge"
+    # U-Boot is needed for RAUC boot counting / A-B switching.
+    RPI_USE_U_BOOT = "1"
+    ENABLE_UART = "1"
+    # Hardware compatibility string: must equal os/rauc/system.conf "compatible"
+    # and the bundle; one per hardware part number.
+    CFB_COMPATIBLE ?= "CFB-HW-100"
+    # Our partition layout: boot, rootfs A, rootfs B, data (os/rauc/system.conf).
+    WKS_FILE = "cfb-dual.wks.in"
+    IMAGE_FSTYPES = "wic.bz2 wic.bmap ext4"
+    # Development signing material (scripts/rauc-dev-keys.sh). Production:
+    # keys stay on the release token, never in the build tree.
+    RAUC_KEYRING_FILE = "${TOPDIR}/../os/yocto/keys/ca.cert.pem"
+    RAUC_KEY_FILE = "${TOPDIR}/../os/yocto/keys/development-1.key.pem"
+    RAUC_CERT_FILE = "${TOPDIR}/../os/yocto/keys/development-1.cert.pem"
+    LICENSE_FLAGS_ACCEPTED = "synaptics-killswitch"
+    # Sensors and status LEDs (same as os/dt/config.txt.snippet).
+    ENABLE_I2C = "1"
+    IMAGE_BOOT_FILES:append = " cfb-portable.dtbo;overlays/cfb-portable.dtbo"
+    do_image_wic[depends] += "cfb-dtoverlay:do_deploy"
+    RPI_EXTRA_CONFIG = "\ndtoverlay=cfb-portable\ndtoverlay=gpio-led,gpio=5,label=cfb-green\ndtoverlay=gpio-led,gpio=6,label=cfb-amber\ndtoverlay=gpio-led,gpio=13,label=cfb-red\n"
