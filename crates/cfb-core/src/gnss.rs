@@ -51,8 +51,8 @@ fn coord(v: &str, hemi: &str, deg_digits: usize) -> Option<f64> {
     if v.len() < deg_digits + 2 {
         return None;
     }
-    let d: f64 = v[..deg_digits].parse().ok()?;
-    let m: f64 = v[deg_digits..].parse().ok()?;
+    let d: f64 = v.get(..deg_digits)?.parse().ok()?;
+    let m: f64 = v.get(deg_digits..)?.parse().ok()?;
     if m >= 60.0 {
         return None;
     }
@@ -68,15 +68,22 @@ fn tod(v: &str) -> Option<f64> {
     if v.len() < 6 {
         return None;
     }
-    let h: f64 = v[0..2].parse().ok()?;
-    let m: f64 = v[2..4].parse().ok()?;
-    let s: f64 = v[4..].parse().ok()?;
+    let h: f64 = v.get(0..2)?.parse().ok()?;
+    let m: f64 = v.get(2..4)?.parse().ok()?;
+    let s: f64 = v.get(4..)?.parse().ok()?;
     Some(h * 3600.0 + m * 60.0 + s)
 }
 
 impl NmeaParser {
     /// Feed one sentence. Returns true if it updated the fix.
     pub fn feed(&mut self, line: &str, t: f64) -> bool {
+        // NMEA 0183 is ASCII. Anything else is line noise; rejecting it here
+        // also keeps every byte-offset slice below on char boundaries
+        // (found by the robustness tests, CFB-HLR-110).
+        if !line.is_ascii() {
+            self.checksum_errors += 1;
+            return false;
+        }
         let Some(data) = checksum_ok(line) else {
             if line.trim_start().starts_with('$') {
                 self.checksum_errors += 1;
@@ -94,7 +101,7 @@ impl NmeaParser {
                 let fix = &mut self.fix;
                 fix.utc_tod_s = tod(f[1]);
                 fix.date = (f[9].len() == 6)
-                    .then(|| Some((f[9][0..2].parse().ok()?, f[9][2..4].parse().ok()?, f[9][4..6].parse().ok()?)))
+                    .then(|| Some((f[9].get(0..2)?.parse().ok()?, f[9].get(2..4)?.parse().ok()?, f[9].get(4..6)?.parse().ok()?)))
                     .flatten();
                 match (valid, lat, lon) {
                     (true, Some(lat), Some(lon)) => {

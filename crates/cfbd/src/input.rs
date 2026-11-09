@@ -20,7 +20,12 @@
 
 use cfb_core::{LinkKind, LinkStatus};
 use std::collections::BTreeMap;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
+
+/// Longest accepted input line (100 Hz IMU samples need ~3 KiB). A longer
+/// line is cut and its remainder discarded, so a broken producer can't
+/// exhaust memory (security review finding S2).
+pub const MAX_LINE: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct Sample {
@@ -112,17 +117,47 @@ pub fn parse_line(line: &str, links: &mut BTreeMap<LinkKind, LinkStatus>) -> Sam
 
 impl<R: BufRead> Inputs for LineInputs<R> {
     fn next(&mut self) -> Option<Sample> {
-        let mut line = String::new();
-        if self.r.read_line(&mut line).ok()? == 0 {
-            return None;
+        let mut buf = Vec::new();
+        let n = (&mut self.r).take(MAX_LINE).read_until(b'\n', &mut buf).ok()?;
+        if n == 0 {
+            return None; // end of input
         }
-        Some(parse_line(&line, &mut self.links))
+        if !buf.ends_with(b"\n") && n as u64 == MAX_LINE {
+            // Over-long line: discard the rest in bounded chunks.
+            loop {
+                let mut sink = Vec::new();
+                match (&mut self.r).take(MAX_LINE).read_until(b'\n', &mut sink) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) if sink.ends_with(b"\n") => break,
+                    Ok(_) => {}
+                }
+            }
+            eprintln!("cfbd: input line longer than {MAX_LINE} bytes truncated");
+        }
+        // Invalid UTF-8 must not stop the daemon: decode lossily.
+        Some(parse_line(&String::from_utf8_lossy(&buf), &mut self.links))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_lines_and_bad_utf8_do_not_stop_input() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"t=1 wow=1\n");
+        data.extend(std::iter::repeat_n(b'x', (MAX_LINE as usize) * 2 + 10));
+        data.extend_from_slice(b"\nt=3 wow=\xff\xfe1\nt=4 wow=0\n");
+        let mut li = LineInputs { r: std::io::Cursor::new(data), links: BTreeMap::new() };
+        assert_eq!(li.next().unwrap().t, 1.0);
+        let truncated = li.next().unwrap();
+        assert_eq!(truncated.t, 0.0, "garbage line parsed as empty sample");
+        let bad = li.next().unwrap();
+        assert_eq!((bad.t, bad.wow), (3.0, None), "invalid UTF-8 value ignored");
+        assert_eq!(li.next().unwrap().wow, Some(false));
+        assert!(li.next().is_none());
+    }
 
     #[test]
     fn parses_all_tokens() {

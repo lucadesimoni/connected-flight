@@ -106,6 +106,9 @@ pub fn parse_csq(line: &str) -> Option<u8> {
 /// Hex decode for ground tools (gateway deliveries are usually hex).
 pub fn from_hex(s: &str) -> Result<Vec<u8>, String> {
     let s = s.trim();
+    if !s.is_ascii() {
+        return Err("not hex".into());
+    }
     if !s.len().is_multiple_of(2) {
         return Err("odd length".into());
     }

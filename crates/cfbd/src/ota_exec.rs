@@ -22,6 +22,12 @@ use std::thread::JoinHandle;
 
 pub const FILES: [&str; 5] = ["asci.toml", "asci.toml.sig", "manifest.toml", "manifest.toml.sig", "bundle.raucb"];
 
+struct Download {
+    /// Index in FILES of the next file to fetch.
+    next: usize,
+    bind_ip: Option<String>,
+}
+
 enum Job {
     Proc { child: Child, kind: &'static str },
     Verify(JoinHandle<OtaResult>),
@@ -33,6 +39,7 @@ pub struct OtaExec {
     cfg: OtaConfig,
     dir: PathBuf,
     job: Option<Job>,
+    download: Option<Download>,
     simulate: bool,
 }
 
@@ -64,7 +71,7 @@ pub fn verify_dir(gate: &UpdateGate, dir: &Path) -> OtaResult {
 impl OtaExec {
     pub fn new(cfg: OtaConfig, simulate: bool) -> Self {
         let dir = PathBuf::from(&cfg.download_dir);
-        Self { cfg, dir, job: None, simulate }
+        Self { cfg, dir, job: None, download: None, simulate }
     }
 
     /// Start a command. `bind_ip` is the tunnel address of the bearer to
@@ -95,18 +102,14 @@ impl OtaExec {
                 for f in &FILES[..4] {
                     let _ = std::fs::remove_file(self.dir.join(f));
                 }
-                let mut script = String::from("set -e\n");
-                for f in FILES {
-                    let iface = bind_ip.as_ref().map(|ip| format!("--interface {ip} ")).unwrap_or_default();
-                    script.push_str(&format!(
-                        "curl -fsS --retry 2 --connect-timeout 20 -C - {iface}-o '{}/{f}' '{}/{f}'\n",
-                        self.dir.display(),
-                        self.cfg.base_url.trim_end_matches('/')
-                    ));
-                }
-                self.spawn("download", Command::new("sh").arg("-c").arg(script));
+                // No shell: one curl process per file, started in sequence by
+                // poll(). The URL and paths are passed as arguments, never
+                // interpreted (security review finding S1).
+                self.download = Some(Download { next: 0, bind_ip });
+                self.start_next_file();
             }
             OtaCmd::AbortDownload => {
+                self.download = None;
                 if let Some(Job::Proc { mut child, .. }) = self.job.take() {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -124,6 +127,22 @@ impl OtaExec {
                 let _ = Command::new("systemctl").arg("reboot").status();
             }
         }
+    }
+
+    /// Start curl for the next file of the running download.
+    fn start_next_file(&mut self) {
+        let Some(d) = self.download.as_mut() else { return };
+        let f = FILES[d.next];
+        d.next += 1;
+        let url = format!("{}/{f}", self.cfg.base_url.trim_end_matches('/'));
+        let out = self.dir.join(f);
+        let mut c = Command::new("curl");
+        c.args(["-fsS", "--retry", "2", "--connect-timeout", "20", "-C", "-"]);
+        if let Some(ip) = &d.bind_ip {
+            c.arg("--interface").arg(ip);
+        }
+        c.arg("-o").arg(out).arg("--").arg(url);
+        self.spawn("download", &mut c);
     }
 
     fn spawn(&mut self, kind: &'static str, cmd: &mut Command) {
@@ -165,12 +184,24 @@ impl OtaExec {
                 None
             }
             Job::Proc { mut child, kind } => match child.try_wait() {
-                Ok(Some(st)) => Some(match (kind, st.success()) {
-                    ("install", true) => OtaResult::InstallOk,
-                    ("install", false) => OtaResult::InstallFailed(format!("rauc {st}")),
-                    (_, true) => OtaResult::DownloadOk,
-                    (_, false) => OtaResult::DownloadFailed(format!("curl {st}")),
-                }),
+                Ok(Some(st)) => match (kind, st.success()) {
+                    ("install", true) => Some(OtaResult::InstallOk),
+                    ("install", false) => Some(OtaResult::InstallFailed(format!("rauc {st}"))),
+                    (_, true) => {
+                        // Next file, or the download is complete.
+                        if self.download.as_ref().is_some_and(|d| d.next < FILES.len()) {
+                            self.start_next_file();
+                            None
+                        } else {
+                            self.download = None;
+                            Some(OtaResult::DownloadOk)
+                        }
+                    }
+                    (_, false) => {
+                        self.download = None;
+                        Some(OtaResult::DownloadFailed(format!("curl {st}")))
+                    }
+                },
                 Ok(None) => {
                     self.job = Some(Job::Proc { child, kind });
                     None
@@ -190,6 +221,60 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn download_runs_curl_per_file_without_shell() {
+        // Real curl against file:// URLs; a quote in the path would break a
+        // shell script, but not argument passing.
+        let base = std::env::temp_dir().join(format!("cfb-dl-{}", std::process::id()));
+        let src = base.join("src'quote");
+        let dst = base.join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        for f in FILES {
+            std::fs::write(src.join(f), format!("content of {f}")).unwrap();
+        }
+        let cfg = OtaConfig {
+            enabled: true,
+            base_url: format!("file://{}", src.display()),
+            download_dir: dst.display().to_string(),
+            inflight_download_links: vec![],
+            retry_s: 1.0,
+        };
+        let gate = UpdateGate {
+            trusted_keys: vec![],
+            hw_part_number: "X".into(),
+            installed_version: "0.1.0".into(),
+            min_supply_v: 0.0,
+        };
+        let mut ex = OtaExec::new(cfg, false);
+        ex.run(&OtaCmd::StartDownload, 0.0, &gate, None);
+        let mut result = None;
+        for _ in 0..500 {
+            if let Some(r) = ex.poll(0.0) {
+                result = Some(r);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(result, Some(OtaResult::DownloadOk));
+        for f in FILES {
+            assert_eq!(std::fs::read_to_string(dst.join(f)).unwrap(), format!("content of {f}"));
+        }
+        // Missing file on the server -> DownloadFailed, not a hang.
+        std::fs::remove_file(src.join("bundle.raucb")).unwrap();
+        let _ = std::fs::remove_file(dst.join("bundle.raucb"));
+        ex.run(&OtaCmd::StartDownload, 0.0, &gate, None);
+        let mut result = None;
+        for _ in 0..500 {
+            if let Some(r) = ex.poll(0.0) {
+                result = Some(r);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(matches!(result, Some(OtaResult::DownloadFailed(_))), "{result:?}");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 
     #[test]
     fn verify_dir_accepts_signed_package_and_rejects_tampered_bundle() {

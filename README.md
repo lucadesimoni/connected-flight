@@ -68,6 +68,7 @@ installed as a **minor change** with **DAL D field-loadable software**.
 | [10 Bench & portable test](docs/10-bench-and-portable-test.md) | Pi 5 + Wi-Fi + 4G + WireGuard setup, 16 tests, rules for carrying it as a portable device |
 | [11 Hardware components](docs/11-hardware-components.md) | Parts for the portable unit and the integrated (certifiable) unit, power, cost, sequence |
 | [12 Architecture & long-term support](docs/12-architecture-and-extension.md) | Layers, extension points, compatibility rules, quality gates, release/support model |
+| [13 Security & robustness review](docs/13-security-review.md) | Attack surface, findings and fixes, accepted risks, open items |
 
 ## Repository layout
 

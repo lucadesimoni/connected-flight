@@ -57,6 +57,10 @@ impl<P: Read + Write> Modem<P> {
                 std::thread::sleep(self.tick.min(Duration::from_millis(50)));
             }
             self.buf.extend_from_slice(&tmp[..n]);
+            if self.buf.len() > 4096 {
+                // Junk without line ends: drop it (security review finding S3).
+                self.buf.clear();
+            }
         }
     }
 

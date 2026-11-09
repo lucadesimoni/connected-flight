@@ -10,7 +10,7 @@ use std::time::Duration;
 
 /// Only the sentences the core uses; no spaces (line-protocol tokens).
 pub fn is_wanted(l: &str) -> bool {
-    l.starts_with('$') && l.len() > 6 && (&l[3..6] == "RMC" || &l[3..6] == "GGA") && !l.contains(' ')
+    l.is_ascii() && l.starts_with('$') && matches!(l.get(3..6), Some("RMC" | "GGA")) && !l.contains(' ')
 }
 
 /// Reader thread: reopens the device after unplug; keeps at most 20 lines
@@ -49,5 +49,6 @@ mod tests {
         assert!(!is_wanted("$GPGSV,1*00"));
         assert!(!is_wanted("$GNRMC,a b*00"));
         assert!(!is_wanted("garbage"));
+        assert!(!is_wanted("$G\u{e9}RMC,1*00"), "non-ASCII must not panic");
     }
 }
