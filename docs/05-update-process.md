@@ -7,8 +7,10 @@
 1. Change request → change classification (minor/major) under the DOA
    procedure. Typical CFB software changes are minor (see 02 §7).
 2. Build the image from a tagged commit in a reproducible build; produce the
-   **Software Configuration Index** (SCI: source tag, toolchain, package
-   list, hashes).
+   **Software Configuration Index** with `scripts/sci.py` (source tag,
+   toolchain, every dependency with checksum, binary and config hashes) and
+   the trace matrix with `scripts/evidence.py`. Both are also produced by
+   CI on every push.
 3. Verification per SVP (Level D): `cargo test`, simulation, target tests,
    regression of all HLR tests.
 4. Create the RAUC bundle, sign it with the release CA (X.509).

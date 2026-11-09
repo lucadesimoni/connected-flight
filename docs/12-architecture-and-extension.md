@@ -72,6 +72,12 @@ thread with a channel.
    sockets) so it is testable without the hardware.
 4. Docs updated in the same commit (config examples parse in tests, so
    they can't drift).
+5. Locally: `scripts/check.sh` runs the same gates as CI before a commit.
+6. Evidence per push (CI job `evidence`, downloadable artifact):
+   `scripts/evidence.py` builds the trace matrix from the HLR table in
+   docs/04 and the test run (**fails** on a missing or failed test), and
+   `scripts/sci.py` writes the Software Configuration Index (commit,
+   toolchain, dependency checksums, binary and config hashes).
 
 ## 5. Release and support model (proposal)
 
