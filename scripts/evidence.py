@@ -39,9 +39,12 @@ def run_tests():
     """Return {full_test_path: status} and {source_file: [test paths]}."""
     # One merged stream: cargo prints "Running <file>" on stderr and the test
     # results on stdout; only the merged order keeps file and tests together.
-    p = subprocess.run(["cargo", "test", "--workspace", "--", "--test-threads=4"], cwd=ROOT,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    out = p.stdout
+    # Plain output: CI sets CARGO_TERM_COLOR=always, and colour codes would
+    # hide the "Running" lines from the parser. Strip any that remain.
+    env = dict(os.environ, CARGO_TERM_COLOR="never")
+    p = subprocess.run(["cargo", "test", "--workspace", "--", "--test-threads=4", "--color=never"], cwd=ROOT,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    out = re.sub(r"\x1b\[[0-9;]*m", "", p.stdout)
     results, by_file, current = {}, {}, None
     for line in out.splitlines():
         m = re.match(r"\s*Running (\S+) \(", line)
