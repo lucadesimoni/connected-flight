@@ -57,6 +57,7 @@ the HLR tests meaningful: the tests exercise the same code that flies.
 | CFB-HLR-012 | WoW=ground with GS > airborne threshold shall give Unknown immediately | `phase.rs` | `wow_disagreeing_with_gnss_goes_unknown_immediately` |
 | CFB-HLR-013 | Without WoW, GS with hysteresis band shall decide | `phase.rs` | `takeoff_and_landing_with_gnss_only`, `short_gust_does_not_flip_phase` |
 | CFB-HLR-014 | Input loss > timeout shall give Unknown | `phase.rs` | `input_loss_times_out_to_unknown` |
+| CFB-HLR-016 | With `baro_cue`, the own barometer shall only make the phase more restrictive: high above the learned ground altitude while GNSS says slow → Unknown; no GNSS but high → Airborne; never OnGround from the barometer | `phase.rs` | `baro_cue_off_has_no_effect`, `frozen_gnss_with_climbing_baro_goes_unknown`, `gnss_lost_at_altitude_baro_says_airborne`, `baro_never_declares_ground` |
 | CFB-HLR-020 | Ground-only links shall transmit only with ground confirmed | `link.rs` `tx_permitted` | `cellular_and_wifi_never_transmit_unless_ground_confirmed` |
 | CFB-HLR-021 | Links shall carry only priorities ≥ their minimum | `link.rs` `select` | `airborne_uses_satcom_for_critical_only` |
 | CFB-HLR-022 | Metered links shall respect a per-flight byte budget | `link.rs` | `flight_budget_caps_satcom` |

@@ -65,6 +65,7 @@ fn main() {
         for r in &log.records {
             let engine = ["rpm", "ng", "fuel_flow"].iter().find_map(|k| r.values.get(*k)).map(|v| *v > 1.0);
             let phase = det.update(PhaseInputs {
+                pressure_alt_ft: None,
                 t: r.t,
                 wow: None,
                 ground_speed_kt: r.values.get("gs").map(|v| *v as f32),

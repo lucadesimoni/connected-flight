@@ -325,7 +325,9 @@ fn main() {
         }
 
         // ---- flight phase
+        let pressure_alt_ft = s.baro_hpa.filter(|_| m.baro).map(reference::pressure_altitude_ft);
         let phase = det.update(PhaseInputs {
+            pressure_alt_ft,
             t,
             wow: s.wow,
             ground_speed_kt: r.gs_kt,

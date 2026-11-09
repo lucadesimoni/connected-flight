@@ -36,6 +36,8 @@ ground_speed_kt    = 35.0
 airborne_confirm_s = 5.0
 ground_confirm_s   = 20.0
 input_timeout_s    = 10.0
+baro_cue           = true     # unpressurised aircraft only: restrictive cross-check
+baro_air_margin_ft = 300.0
 
 [links.wifi]
 enabled      = true

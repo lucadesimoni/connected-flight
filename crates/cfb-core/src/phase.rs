@@ -44,6 +44,9 @@ pub struct PhaseInputs {
     pub ground_speed_kt: Option<f32>,
     /// Engine running (oil pressure switch, RPM, or alternator voltage).
     pub engine_running: Option<bool>,
+    /// Pressure altitude from the own barometer (only used with
+    /// `PhaseConfig::baro_cue`).
+    pub pressure_alt_ft: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -58,6 +61,18 @@ pub struct PhaseConfig {
     pub ground_confirm_s: f64,
     /// After this long with no valid input, revert to `Unknown`.
     pub input_timeout_s: f64,
+    /// Use the own barometer as a **restrictive** cue (CFB-HLR-016). Off for
+    /// pressurised cabins, where cabin pressure says nothing about altitude.
+    #[serde(default)]
+    pub baro_cue: bool,
+    /// Height above the learned ground pressure altitude that counts as
+    /// "certainly airborne".
+    #[serde(default = "baro_margin")]
+    pub baro_air_margin_ft: f64,
+}
+
+fn baro_margin() -> f64 {
+    300.0
 }
 
 impl Default for PhaseConfig {
@@ -68,6 +83,8 @@ impl Default for PhaseConfig {
             airborne_confirm_s: 5.0,
             ground_confirm_s: 20.0,
             input_timeout_s: 10.0,
+            baro_cue: false,
+            baro_air_margin_ft: 300.0,
         }
     }
 }
@@ -79,11 +96,13 @@ pub struct PhaseDetector {
     /// The phase the inputs currently point to, and since when.
     candidate: Option<(FlightPhase, f64)>,
     last_valid_input_t: Option<f64>,
+    /// Pressure altitude of the ground, learned while on ground is confirmed.
+    ground_alt_ft: Option<f64>,
 }
 
 impl PhaseDetector {
     pub fn new(cfg: PhaseConfig) -> Self {
-        Self { cfg, phase: FlightPhase::Unknown, candidate: None, last_valid_input_t: None }
+        Self { cfg, phase: FlightPhase::Unknown, candidate: None, last_valid_input_t: None, ground_alt_ft: None }
     }
 
     pub fn phase(&self) -> FlightPhase {
@@ -91,16 +110,25 @@ impl PhaseDetector {
     }
 
     /// Instantaneous indication from one sample, before debouncing.
+    /// CFB-HLR-016: the barometer clearly says "well above the ground".
+    /// It can only make the result more restrictive, never say "ground":
+    /// otherwise a takeoff roll with lost GNSS would keep the ground radios
+    /// on up to the margin.
+    fn baro_says_airborne(&self, i: &PhaseInputs) -> bool {
+        self.cfg.baro_cue
+            && matches!((self.ground_alt_ft, i.pressure_alt_ft), (Some(g), Some(a)) if a - g > self.cfg.baro_air_margin_ft)
+    }
+
     fn indicate(&self, i: &PhaseInputs) -> Option<FlightPhase> {
+        let baro_air = self.baro_says_airborne(i);
         // CFB-HLR-011: WoW is the primary source when present.
         if let Some(wow) = i.wow {
-            // CFB-HLR-012: if WoW says ground but GNSS says we're fast, the
-            // inputs disagree, so we take the restrictive result.
+            // CFB-HLR-012: if WoW says ground but GNSS says we're fast (or
+            // the barometer says we're well above the ground), the inputs
+            // disagree, so we take the restrictive result.
             if wow {
-                if let Some(gs) = i.ground_speed_kt {
-                    if gs > self.cfg.airborne_speed_kt {
-                        return Some(FlightPhase::Unknown);
-                    }
+                if i.ground_speed_kt.is_some_and(|gs| gs > self.cfg.airborne_speed_kt) || baro_air {
+                    return Some(FlightPhase::Unknown);
                 }
                 return Some(FlightPhase::OnGround);
             }
@@ -109,14 +137,31 @@ impl PhaseDetector {
         // CFB-HLR-013: fall back to GNSS ground speed, with a hysteresis band.
         match i.ground_speed_kt {
             Some(gs) if gs >= self.cfg.airborne_speed_kt => Some(FlightPhase::Airborne),
-            Some(gs) if gs <= self.cfg.ground_speed_kt => Some(FlightPhase::OnGround),
+            Some(gs) if gs <= self.cfg.ground_speed_kt => {
+                // Slow but high above the ground: GNSS frozen or wrong.
+                Some(if baro_air { FlightPhase::Unknown } else { FlightPhase::OnGround })
+            }
             Some(_) => None, // inside the band: no new indication, keep state
+            None if baro_air => Some(FlightPhase::Airborne),
             None => None,
         }
     }
 
     /// Feed one sample and return the debounced phase.
     pub fn update(&mut self, i: PhaseInputs) -> FlightPhase {
+        let p = self.update_phase(&i);
+        // Learn the ground pressure altitude (slow average, follows weather).
+        if self.cfg.baro_cue && p == FlightPhase::OnGround {
+            if let Some(a) = i.pressure_alt_ft {
+                let g = self.ground_alt_ft.get_or_insert(a);
+                *g += 0.05 * (a - *g);
+            }
+        }
+        p
+    }
+
+    fn update_phase(&mut self, i: &PhaseInputs) -> FlightPhase {
+        let i = *i;
         let ind = self.indicate(&i);
         if ind.is_some() || i.ground_speed_kt.is_some() {
             self.last_valid_input_t = Some(i.t);
@@ -175,7 +220,63 @@ mod tests {
     use super::*;
 
     fn s(t: f64, wow: Option<bool>, gs: Option<f32>) -> PhaseInputs {
-        PhaseInputs { t, wow, ground_speed_kt: gs, engine_running: None }
+        PhaseInputs { t, wow, ground_speed_kt: gs, engine_running: None, pressure_alt_ft: None }
+    }
+
+    fn baro_cfg() -> PhaseConfig {
+        PhaseConfig { baro_cue: true, ..PhaseConfig::default() }
+    }
+
+    fn sb(t: f64, gs: Option<f32>, alt: f64) -> PhaseInputs {
+        PhaseInputs { t, wow: None, ground_speed_kt: gs, engine_running: None, pressure_alt_ft: Some(alt) }
+    }
+
+    /// 30 s parked at 1400 ft pressure altitude: ground confirmed, reference learned.
+    fn parked(d: &mut PhaseDetector) {
+        for t in 0..=30 {
+            d.update(sb(t as f64, Some(0.0), 1400.0));
+        }
+        assert_eq!(d.phase(), FlightPhase::OnGround);
+    }
+
+    #[test]
+    fn baro_cue_off_has_no_effect() {
+        let mut d = PhaseDetector::new(PhaseConfig::default());
+        parked(&mut d);
+        assert_eq!(d.update(sb(31.0, Some(0.0), 3000.0)), FlightPhase::OnGround);
+    }
+
+    #[test]
+    fn frozen_gnss_with_climbing_baro_goes_unknown() {
+        let mut d = PhaseDetector::new(baro_cfg());
+        parked(&mut d);
+        assert_eq!(d.update(sb(31.0, Some(0.0), 1650.0)), FlightPhase::OnGround, "within margin");
+        assert_eq!(d.update(sb(32.0, Some(0.0), 1800.0)), FlightPhase::Unknown, "GNSS says slow, baro says high");
+    }
+
+    #[test]
+    fn gnss_lost_at_altitude_baro_says_airborne() {
+        let mut d = PhaseDetector::new(baro_cfg());
+        parked(&mut d);
+        for t in 31..=40 {
+            d.update(sb(t as f64, None, 1400.0 + (t - 30) as f64 * 100.0));
+        }
+        assert_eq!(d.phase(), FlightPhase::Airborne);
+    }
+
+    #[test]
+    fn baro_never_declares_ground() {
+        let mut d = PhaseDetector::new(baro_cfg());
+        parked(&mut d);
+        for t in 31..=40 {
+            d.update(sb(t as f64, None, 2500.0));
+        }
+        assert_eq!(d.phase(), FlightPhase::Airborne);
+        // Back at field elevation but no GNSS: baro alone must not say ground.
+        for t in 41..=80 {
+            d.update(sb(t as f64, None, 1400.0));
+        }
+        assert_eq!(d.phase(), FlightPhase::Unknown, "times out to Unknown, never OnGround");
     }
 
     #[test]
