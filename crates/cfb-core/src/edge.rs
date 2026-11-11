@@ -76,17 +76,30 @@ pub trait EdgeApp {
 // ------------------------------------------------------------ runtime
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Limits {
+    /// Outputs sent per tick per app; the rest wait in the backlog.
     pub max_outputs_per_tick: usize,
     pub max_payload: usize,
     pub flight_bytes: u64,
     pub tick_budget_us: u64,
     pub max_overruns: u32,
+    /// Outputs waiting per app (CFB-HLR-085). A burst (e.g. all limits
+    /// exceeded at once) drains at `max_outputs_per_tick`; only outputs
+    /// beyond this are dropped.
+    pub max_backlog: usize,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { max_outputs_per_tick: 4, max_payload: 240, flight_bytes: 16 * 1024, tick_budget_us: 2000, max_overruns: 3 }
+        Self {
+            max_outputs_per_tick: 4,
+            max_payload: 240,
+            flight_bytes: 16 * 1024,
+            tick_budget_us: 2000,
+            max_overruns: 3,
+            max_backlog: 256,
+        }
     }
 }
 
@@ -101,6 +114,8 @@ struct Slot {
     enabled: bool,
     overruns: u32,
     bytes_this_flight: u64,
+    /// Outputs (already prefixed and size-checked) waiting to be sent.
+    backlog: std::collections::VecDeque<EdgeOutput>,
 }
 
 pub struct EdgeRuntime {
@@ -114,11 +129,16 @@ impl EdgeRuntime {
     }
 
     pub fn add(&mut self, app: Box<dyn EdgeApp>) {
-        self.slots.push(Slot { app, enabled: true, overruns: 0, bytes_this_flight: 0 });
+        self.slots.push(Slot { app, enabled: true, overruns: 0, bytes_this_flight: 0, backlog: Default::default() });
     }
 
     pub fn apps(&self) -> Vec<(String, String, bool)> {
         self.slots.iter().map(|s| (s.app.id().to_string(), s.app.version().to_string(), s.enabled)).collect()
+    }
+
+    /// Outputs waiting in all backlogs.
+    pub fn backlog_len(&self) -> usize {
+        self.slots.iter().map(|s| s.backlog.len()).sum()
     }
 
     pub fn reset_flight(&mut self) {
@@ -133,54 +153,68 @@ impl EdgeRuntime {
         let mut outs = Vec::new();
         let mut events = Vec::new();
         let lim = self.limits;
-        for s in self.slots.iter_mut().filter(|s| s.enabled) {
+        for s in self.slots.iter_mut() {
             let id = s.app.id().to_string();
-            let start = Instant::now();
-            let r = catch_unwind(AssertUnwindSafe(|| s.app.tick(v)));
-            let took = start.elapsed();
-            let produced = match r {
-                Ok(o) => o,
-                Err(_) => {
-                    s.enabled = false;
-                    events.push(RuntimeEvent::Disabled { app: id, reason: "panicked".into() });
-                    continue;
+            // Drops are counted per reason and reported once per tick, so a
+            // storm can't turn into a storm of health messages.
+            let mut dropped: std::collections::BTreeMap<&'static str, usize> = Default::default();
+            if s.enabled {
+                let start = Instant::now();
+                let r = catch_unwind(AssertUnwindSafe(|| s.app.tick(v)));
+                let took = start.elapsed();
+                match r {
+                    Err(_) => {
+                        s.enabled = false;
+                        events.push(RuntimeEvent::Disabled { app: id.clone(), reason: "panicked".into() });
+                    }
+                    Ok(produced) => {
+                        if took > Duration::from_micros(lim.tick_budget_us) {
+                            s.overruns += 1;
+                            if s.overruns >= lim.max_overruns {
+                                s.enabled = false;
+                                events.push(RuntimeEvent::Disabled {
+                                    app: id.clone(),
+                                    reason: format!("CPU budget exceeded {} times (last {} us)", s.overruns, took.as_micros()),
+                                });
+                            }
+                        } else {
+                            s.overruns = 0;
+                        }
+                        // Outputs produced before the app was disabled are
+                        // still valid: queue them.
+                        for mut o in produced {
+                            let mut p = format!("{id}|").into_bytes();
+                            p.append(&mut o.payload);
+                            if p.len() > lim.max_payload {
+                                *dropped.entry("payload too large").or_default() += 1;
+                                continue;
+                            }
+                            if s.backlog.len() >= lim.max_backlog {
+                                *dropped.entry("backlog full").or_default() += 1;
+                                continue;
+                            }
+                            o.payload = p;
+                            s.backlog.push_back(o);
+                        }
+                    }
                 }
-            };
-            if took > Duration::from_micros(lim.tick_budget_us) {
-                s.overruns += 1;
-                if s.overruns >= lim.max_overruns {
-                    s.enabled = false;
-                    events.push(RuntimeEvent::Disabled {
-                        app: id,
-                        reason: format!("CPU budget exceeded {} times (last {} us)", s.overruns, took.as_micros()),
-                    });
-                    continue;
-                }
-            } else {
-                s.overruns = 0;
             }
-            let n = produced.len();
-            let mut kept = 0;
-            for mut o in produced.into_iter().take(lim.max_outputs_per_tick) {
-                let mut p = format!("{id}|").into_bytes();
-                p.append(&mut o.payload);
-                if p.len() > lim.max_payload {
-                    events.push(RuntimeEvent::Dropped { app: id.clone(), outputs: 1, reason: "payload too large" });
+            // Send from the backlog at the per-tick rate (also for a
+            // disabled app: its queued outputs were produced while valid).
+            let mut sent = 0;
+            while sent < lim.max_outputs_per_tick {
+                let Some(o) = s.backlog.pop_front() else { break };
+                if s.bytes_this_flight + o.payload.len() as u64 > lim.flight_bytes {
+                    *dropped.entry("flight byte budget").or_default() += 1;
                     continue;
                 }
-                if s.bytes_this_flight + p.len() as u64 > lim.flight_bytes {
-                    events.push(RuntimeEvent::Dropped { app: id.clone(), outputs: 1, reason: "flight byte budget" });
-                    continue;
-                }
-                s.bytes_this_flight += p.len() as u64;
-                o.payload = p;
+                s.bytes_this_flight += o.payload.len() as u64;
                 outs.push(o);
-                kept += 1;
+                sent += 1;
             }
-            if n > lim.max_outputs_per_tick {
-                events.push(RuntimeEvent::Dropped { app: id, outputs: n - lim.max_outputs_per_tick, reason: "too many outputs" });
+            for (reason, n) in dropped {
+                events.push(RuntimeEvent::Dropped { app: id.clone(), outputs: n, reason });
             }
-            let _ = kept;
         }
         (outs, events)
     }
@@ -660,18 +694,69 @@ enabled = true
     }
 
     #[test]
-    fn runtime_enforces_output_and_byte_limits() {
+    fn runtime_rate_limits_and_budget() {
+        // 10 outputs of 105 bytes per tick, 4 sent per tick, 500-byte budget.
         let mut rt = EdgeRuntime::new(Limits { flight_bytes: 500, ..Limits::default() });
         rt.add(Box::new(Spammer));
         let (o, ev) = rt.tick(&DataView::default());
-        assert_eq!(o.len(), 4, "max outputs per tick");
+        assert_eq!(o.len(), 4, "rate limit");
         assert!(o[0].payload.starts_with(b"spam|"));
-        assert!(ev.iter().any(|e| matches!(e, RuntimeEvent::Dropped { reason: "too many outputs", .. })));
+        assert!(ev.is_empty(), "excess waits in the backlog, nothing dropped: {ev:?}");
+        assert_eq!(rt.backlog_len(), 6);
         let (o, ev) = rt.tick(&DataView::default());
-        assert_eq!(o.len(), 0, "flight budget used up: 4 x 105 = 420 of 500");
-        assert!(ev.iter().any(|e| matches!(e, RuntimeEvent::Dropped { reason: "flight byte budget", .. })));
+        assert_eq!(o.len(), 0, "budget used up: 4 x 105 = 420 of 500");
+        assert_eq!(ev.len(), 1, "one aggregated event, not one per output: {ev:?}");
+        assert!(matches!(&ev[0], RuntimeEvent::Dropped { reason: "flight byte budget", outputs, .. } if *outputs == 16));
         rt.reset_flight();
         assert_eq!(rt.tick(&DataView::default()).0.len(), 4);
+    }
+
+    struct Burst(u32);
+    impl EdgeApp for Burst {
+        fn id(&self) -> &str { "burst" }
+        fn version(&self) -> &str { "0" }
+        fn tick(&mut self, _: &DataView) -> Vec<EdgeOutput> {
+            self.0 += 1;
+            if self.0 == 1 {
+                (0..128).map(|i| EdgeOutput { priority: Priority::High, ttl_s: 0, payload: format!("EXC {i:03}").into_bytes() }).collect()
+            } else {
+                vec![]
+            }
+        }
+    }
+
+    #[test]
+    fn burst_is_delivered_completely_over_following_ticks() {
+        // CFB-HLR-085: 128 outputs in one tick (storm) all arrive, 4 per tick.
+        let mut rt = EdgeRuntime::new(Limits::default());
+        rt.add(Box::new(Burst(0)));
+        let mut got = Vec::new();
+        for _ in 0..40 {
+            let (o, ev) = rt.tick(&DataView::default());
+            assert!(ev.is_empty(), "{ev:?}");
+            assert!(o.len() <= 4);
+            got.extend(o.into_iter().map(|x| String::from_utf8(x.payload).unwrap()));
+        }
+        assert_eq!(got.len(), 128, "nothing lost");
+        assert_eq!(got[0], "burst|EXC 000");
+        assert_eq!(got[127], "burst|EXC 127", "order kept");
+        assert_eq!(rt.backlog_len(), 0);
+    }
+
+    #[test]
+    fn backlog_overflow_drops_only_the_excess() {
+        let mut rt = EdgeRuntime::new(Limits { max_backlog: 100, ..Limits::default() });
+        rt.add(Box::new(Burst(0)));
+        let (o, ev) = rt.tick(&DataView::default());
+        assert_eq!(o.len(), 4);
+        assert_eq!(ev, vec![RuntimeEvent::Dropped { app: "burst".into(), outputs: 28, reason: "backlog full" }]);
+        assert_eq!(rt.backlog_len(), 96);
+    }
+
+    #[test]
+    fn limits_from_older_config_without_new_field() {
+        let l: Limits = toml::from_str("max_outputs_per_tick = 4\nmax_payload = 240\nflight_bytes = 16384\ntick_budget_us = 2000\nmax_overruns = 3\n").unwrap();
+        assert_eq!(l.max_backlog, 256, "new field defaults (docs/12 compatibility rule)");
     }
 
     #[test]

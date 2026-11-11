@@ -280,8 +280,28 @@ fn main() {
     );
     sd_notify("READY=1");
 
+    // Per-tick work time (input reading excluded): the real-time budget is
+    // 1 s per tick. Kept as a histogram of microseconds (bounded memory).
+    let mut tick_hist = TickHistogram::default();
+    let mut input_truncated: u64 = 0;
+    let mut truncated_reported: u64 = 0;
+    let mut last_trunc_report = f64::NEG_INFINITY;
+    // Edge drops summed per (app, reason), reported at most once a minute.
+    let mut edge_drops: BTreeMap<(String, &'static str), usize> = BTreeMap::new();
+    let mut last_drop_report = f64::NEG_INFINITY;
+    let mut last_tick_us: u64 = 0;
     while let Some(s) = src.next() {
+        let tick_start = Instant::now();
         let t = s.t;
+        if s.truncated {
+            input_truncated += 1;
+        }
+        if input_truncated > truncated_reported && t - last_trunc_report >= 60.0 {
+            out.event(t, MsgType::Health, Priority::Normal,
+                format!("INPUT {} line(s) over the size limit, tails cut (bulk data lost)", input_truncated - truncated_reported));
+            truncated_reported = input_truncated;
+            last_trunc_report = t;
+        }
 
         // ---- module check (CFB-HLR-070)
         if let Some(hw) = &s.hw {
@@ -405,9 +425,18 @@ fn main() {
                     faults.insert(Fault::EdgeApp);
                     format!("EDGE app {app} DISABLED: {reason}")
                 }
-                RuntimeEvent::Dropped { app, outputs, reason } => format!("EDGE app {app}: {outputs} output(s) dropped ({reason})"),
+                RuntimeEvent::Dropped { app, outputs, reason } => {
+                    *edge_drops.entry((app, reason)).or_default() += outputs;
+                    continue;
+                }
             };
             out.event(t, MsgType::Health, Priority::Normal, txt);
+        }
+        if !edge_drops.is_empty() && t - last_drop_report >= 60.0 {
+            for ((app, reason), n) in std::mem::take(&mut edge_drops) {
+                out.event(t, MsgType::Health, Priority::Normal, format!("EDGE app {app}: {n} output(s) dropped ({reason})"));
+            }
+            last_drop_report = t;
         }
 
         if phase == FlightPhase::OnGround && flown_this_leg {
@@ -755,6 +784,10 @@ fn main() {
                     Err(e) => format!("blocked: {e:?}"),
                 },
                 edge_apps: edge.apps().into_iter().map(|(id, v, en)| format!("{id} {v} {}", if en { "running" } else { "DISABLED" })).collect(),
+                tick_work_us_last: last_tick_us,
+                input_truncated,
+                edge_backlog: edge.backlog_len(),
+                tick_work_us_max: tick_hist.max_us,
             };
             if let Err(e) = status_out::write(p, &snap) {
                 if !status_err_logged {
@@ -771,6 +804,8 @@ fn main() {
                 Err(e) => println!("[{t:>6.0}s] update gate: blocked {e:?}"),
             }
         }
+        last_tick_us = tick_start.elapsed().as_micros() as u64;
+        tick_hist.record(last_tick_us);
     }
 
     if !simulate {
@@ -794,4 +829,71 @@ fn main() {
         println!("edge app {id} {ver}: {}", if en { "running" } else { "DISABLED" });
     }
     println!("still queued: {} messages, {} bytes; evicted: {}", out.queue.len(), out.queue.bytes(), out.queue.evicted);
+    println!("input lines truncated: {input_truncated}; edge backlog at end: {}", edge.backlog_len());
+    println!(
+        "tick work: {} ticks, mean {} us, p50 {} us, p99 {} us, max {} us (budget 1 000 000 us per tick)",
+        tick_hist.count,
+        tick_hist.mean_us(),
+        tick_hist.percentile_us(50.0),
+        tick_hist.percentile_us(99.0),
+        tick_hist.max_us
+    );
+    if let Some(kb) = peak_rss_kb() {
+        println!("peak memory (VmHWM): {} KiB", kb);
+    }
+}
+
+/// Peak resident memory of this process (Linux).
+fn peak_rss_kb() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/self/status").ok()?;
+    s.lines().find(|l| l.starts_with("VmHWM:"))?.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Tick work-time histogram: 1 us buckets up to 1 ms, then 100 us buckets
+/// up to 1 s, then one overflow bucket. Bounded memory for any run length.
+#[derive(Default)]
+struct TickHistogram {
+    fine: Vec<u64>,
+    coarse: Vec<u64>,
+    over: u64,
+    count: u64,
+    sum_us: u64,
+    max_us: u64,
+}
+
+impl TickHistogram {
+    fn record(&mut self, us: u64) {
+        if self.fine.is_empty() {
+            self.fine = vec![0; 1000];
+            self.coarse = vec![0; 10_000];
+        }
+        match us {
+            0..=999 => self.fine[us as usize] += 1,
+            1000..=999_999 => self.coarse[(us / 100) as usize] += 1,
+            _ => self.over += 1,
+        }
+        self.count += 1;
+        self.sum_us += us;
+        self.max_us = self.max_us.max(us);
+    }
+    fn mean_us(&self) -> u64 {
+        self.sum_us.checked_div(self.count).unwrap_or(0)
+    }
+    fn percentile_us(&self, p: f64) -> u64 {
+        let target = ((self.count as f64) * p / 100.0).ceil() as u64;
+        let mut acc = 0;
+        for (i, n) in self.fine.iter().enumerate() {
+            acc += n;
+            if acc >= target {
+                return i as u64;
+            }
+        }
+        for (i, n) in self.coarse.iter().enumerate() {
+            acc += n;
+            if acc >= target {
+                return i as u64 * 100;
+            }
+        }
+        self.max_us
+    }
 }

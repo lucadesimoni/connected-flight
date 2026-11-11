@@ -48,6 +48,11 @@ pub struct Snapshot {
     pub ota_state: String,
     pub update_gate: String,
     pub edge_apps: Vec<String>,
+    /// Work time of the last tick and the maximum since start (budget 1 s).
+    pub tick_work_us_last: u64,
+    pub tick_work_us_max: u64,
+    pub input_truncated: u64,
+    pub edge_backlog: usize,
 }
 
 /// Atomic write: temp file + rename, so the reader never sees half a file.

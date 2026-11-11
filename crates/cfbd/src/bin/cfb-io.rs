@@ -100,17 +100,19 @@ fn main() {
             line.push_str(" nmea=");
             line.push_str(&s);
         }
-        let samples: Vec<[f32; 3]> = imu.lock().unwrap().drain(..).collect();
-        if !samples.is_empty() {
-            let v: Vec<String> = samples.iter().map(|s| format!("{:.4},{:.4},{:.4}", s[0], s[1], s[2])).collect();
-            line.push_str(" imu=");
-            line.push_str(&v.join(";"));
-        }
         if first {
             if let Some(h) = &hw {
                 line.push_str(&format!(" hw={h}"));
             }
             first = false;
+        }
+        // Bulk tokens last (cfbd input.rs order rule): IMU, then ARINC.
+        // An ARINC adapter must append its a429= token after imu=.
+        let samples: Vec<[f32; 3]> = imu.lock().unwrap().drain(..).collect();
+        if !samples.is_empty() {
+            let v: Vec<String> = samples.iter().map(|s| format!("{:.4},{:.4},{:.4}", s[0], s[1], s[2])).collect();
+            line.push_str(" imu=");
+            line.push_str(&v.join(";"));
         }
         if writeln!(stdout, "{line}").and_then(|_| stdout.flush()).is_err() {
             return; // cfbd went away; systemd restarts the pipeline

@@ -15,6 +15,12 @@
 //! hw=<id>,<id>,...                       module IDs read from ID EEPROMs (at boot)
 //! ```
 //!
+//! Token order rule (CFB-HLR-111): bulk tokens last, largest at the very
+//! end: `... nmea=… imu=… a429=…`. A line longer than `MAX_LINE` is cut, and
+//! only the tail is lost; GNSS and discretes always survive. At the physical
+//! bus maximum (4 high-speed ARINC channels, ~11 100 words/s) a line is
+//! ~125 KB, within `MAX_LINE` with a 2x margin.
+//!
 //! `eng` is the oil-pressure discrete if one is wired; send `-` otherwise and
 //! the IMU vibration is used.
 
@@ -42,6 +48,8 @@ pub struct Sample {
     pub imu: Vec<[f32; 3]>,
     pub links: BTreeMap<LinkKind, LinkStatus>,
     pub hw: Option<Vec<String>>,
+    /// The line was longer than MAX_LINE and was cut (CFB-HLR-111).
+    pub truncated: bool,
 }
 
 pub trait Inputs {
@@ -82,9 +90,13 @@ pub fn parse_line(line: &str, links: &mut BTreeMap<LinkKind, LinkStatus>) -> Sam
             "baro" => s.baro_hpa = opt(v),
             "a429" => {
                 for w in v.split(',') {
+                    // Exactly 8 hex digits: a word cut by line truncation
+                    // must be dropped, not decoded as a shorter number.
                     if let Some((ch, hex)) = w.split_once(':') {
-                        if let (Ok(ch), Ok(word)) = (ch.parse(), u32::from_str_radix(hex, 16)) {
-                            s.a429.push((ch, word));
+                        if hex.len() == 8 {
+                            if let (Ok(ch), Ok(word)) = (ch.parse(), u32::from_str_radix(hex, 16)) {
+                                s.a429.push((ch, word));
+                            }
                         }
                     }
                 }
@@ -122,7 +134,8 @@ impl<R: BufRead> Inputs for LineInputs<R> {
         if n == 0 {
             return None; // end of input
         }
-        if !buf.ends_with(b"\n") && n as u64 == MAX_LINE {
+        let truncated = !buf.ends_with(b"\n") && n as u64 == MAX_LINE;
+        if truncated {
             // Over-long line: discard the rest in bounded chunks.
             loop {
                 let mut sink = Vec::new();
@@ -132,10 +145,11 @@ impl<R: BufRead> Inputs for LineInputs<R> {
                     Ok(_) => {}
                 }
             }
-            eprintln!("cfbd: input line longer than {MAX_LINE} bytes truncated");
         }
         // Invalid UTF-8 must not stop the daemon: decode lossily.
-        Some(parse_line(&String::from_utf8_lossy(&buf), &mut self.links))
+        let mut sample = parse_line(&String::from_utf8_lossy(&buf), &mut self.links);
+        sample.truncated = truncated;
+        Some(sample)
     }
 }
 
@@ -157,6 +171,22 @@ mod tests {
         assert_eq!((bad.t, bad.wow), (3.0, None), "invalid UTF-8 value ignored");
         assert_eq!(li.next().unwrap().wow, Some(false));
         assert!(li.next().is_none());
+    }
+
+    #[test]
+    fn truncated_line_keeps_early_tokens_and_drops_partial_words() {
+        let mut line = String::from("t=7 wow=1 nmea=$GNRMC,1*00 imu=0,0,-1 a429=");
+        while line.len() < MAX_LINE as usize + 1000 {
+            line.push_str("0:e0000a41,");
+        }
+        line.push('\n');
+        let mut li = LineInputs { r: std::io::Cursor::new(line.into_bytes()), links: BTreeMap::new() };
+        let s = li.next().unwrap();
+        assert!(s.truncated);
+        assert_eq!((s.t, s.wow, s.nmea.len(), s.imu.len()), (7.0, Some(true), 1, 1), "early tokens survive");
+        assert!(s.a429.iter().all(|(_, w)| *w == 0xe000_0a41), "no partial word decoded");
+        let mut links = BTreeMap::new();
+        assert!(parse_line("a429=0:e0000a41,1:e0000a,2:zz", &mut links).a429.len() == 1);
     }
 
     #[test]
