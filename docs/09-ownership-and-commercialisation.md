@@ -70,7 +70,7 @@
 | Model | Customer | You sell | Fits |
 |---|---|---|---|
 | **Ground analytics first** | Operators, CAMOs, flight schools | Edge apps run on existing logs (Garmin CSV, QAR, ACMS files) as SaaS, per aircraft per month | No aircraft change, no certification; revenue and data now (`cfb-replay` is the core) |
-| **OEM / TC-holder licence** | Aircraft manufacturers | Software + hardware design licence, per-aircraft royalty, they certify as a design change | Fastest route into line-fit; they hold the ICDs and the DOA |
+| **OEM / TC-holder licence** (primary route) | Aircraft manufacturers with DOA + POA | Design data and software licence, per-unit royalty, support; the OEM's DO certifies, its PO builds or has built (docs/15) | Fastest route into line-fit; they hold the ICDs, the data rights and both approvals |
 | **STC partner** | DOA / MRO / avionics shop | Licence to install under their STC (AML across types); per-kit fee | Retrofit market |
 | **Box + subscription** | Operators | Hardware kit + monthly service (ground service, OTA, apps, links) | Recurring revenue; needs a production partner and certification |
 | **App platform** | Operators, engine OEMs, FDM providers | Signed edge-app packages, marketplace / revenue share | Builds on the signed-package model |

@@ -5,5 +5,7 @@
 ACTION=="add", SUBSYSTEM=="leds", KERNEL=="cfb-*", RUN+="/bin/chgrp cfb /sys%p/brightness", RUN+="/bin/chmod g+w /sys%p/brightness"
 # IIO sensors: let cfb-io set the sampling rate.
 ACTION=="add", SUBSYSTEM=="iio", RUN+="/bin/sh -c 'chgrp cfb /sys%p/in_accel_sampling_frequency 2>/dev/null; chmod g+w /sys%p/in_accel_sampling_frequency 2>/dev/null; true'"
-# Stable name for the Iridium modem's USB-serial adapter (adjust idVendor/idProduct).
-#SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", SYMLINK+="iridium", GROUP="dialout", MODE="0660"
+# Stable name for the Iridium modem (RockBLOCK 9603 via its FTDI USB adaptor,
+# FTDI vendor 0403). Check the product ID with `lsusb` and pin it (and the
+# serial number) if a second FTDI device is ever connected.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", SYMLINK+="iridium", GROUP="dialout", MODE="0660"

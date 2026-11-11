@@ -69,7 +69,10 @@ installed as a **minor change** with **DAL D field-loadable software**.
 | [11 Hardware components](docs/11-hardware-components.md) | Parts for the portable unit and the integrated (certifiable) unit, power, cost, sequence |
 | [12 Architecture & long-term support](docs/12-architecture-and-extension.md) | Layers, extension points, compatibility rules, quality gates, release/support model |
 | [13 Security & robustness review](docs/13-security-review.md) | Attack surface, findings and fixes, accepted risks, open items |
-| [cert/](docs/cert/README.md) | Drafts: FHA, PSAC, SDP, SVP, SCMP, SQAP (for the DOA partner) |
+| [14 Portable kit parts (verified)](docs/14-portable-kit-bom.md) | Exact parts, compatibility evidence, pin plan, power budget, integration path (same chips) |
+| [15 OEM route](docs/15-oem-certification-and-production.md) | Certification by the OEM's DO, production by its PO, deliverables, production options, licence/escrow |
+| [16 Interface control (ICD)](docs/16-interface-control.md) | Electrical, RF, data and software interfaces of the integrated unit |
+| [cert/](docs/cert/README.md) | Drafts: FHA, PSAC, SDP, SVP, SCMP, SQAP (inputs for the OEM's DO) |
 
 ## Repository layout
 

@@ -1,17 +1,31 @@
 # Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
 # Proprietary software, not open source. See LICENSE.
-# Append to /boot/firmware/config.txt on the portable unit.
+# Append to /boot/firmware/config.txt on the portable kit (docs/14).
+#
+# Pin plan (no conflicts; GPIO = BCM numbers, pin = header pin):
+#   GPIO2/3   pins 3/5    I2C: ISM330DHCX 0x6a, BMP390 0x77, X1200 fuel gauge 0x36
+#   GPIO14/15 pins 8/10   UART0 -> GNSS RX/TX (u-blox, 38400 8N1) = /dev/ttyAMA0
+#   GPIO6     pin 31      X1200 power-loss detect (input; low = mains/supply lost)
+#   GPIO16    pin 36      X1200 charge control (reserved by the UPS, do not use)
+#   GPIO17    pin 11      LED green (+ 330 ohm to LED anode, cathode to GND)
+#   GPIO27    pin 13      LED amber
+#   GPIO22    pin 15      LED red
+#   GPIO23    pin 16      radio switch sense (switch ON closes to GND; internal pull-up)
 
-# Sensors (os/dt/cfb-portable-overlay.dts)
+# Sensors (os/dt/cfb-portable-overlay.dts). SparkFun IMU board: add ,imu_addr=0x6b
 dtparam=i2c_arm=on
 dtoverlay=cfb-portable
 
-# Status LEDs as Linux LED-class devices (GPIO numbers are examples:
-# change them to your wiring; LED + resistor to GND, active high).
-dtoverlay=gpio-led,gpio=5,label=cfb-green
-dtoverlay=gpio-led,gpio=6,label=cfb-amber
-dtoverlay=gpio-led,gpio=13,label=cfb-red
+# GNSS on the hardware UART (no USB driver involved; same as the carrier board).
+# Not uart0_console: the port belongs to the GNSS receiver.
+dtparam=uart0
 
-# USB current: needed for modem + GNSS + IMU unless a 5 V / 5 A supply
-# is used. Check your power budget (docs/11) before enabling.
-#usb_max_current_enable=1
+# Status LEDs as Linux LED-class devices.
+dtoverlay=gpio-led,gpio=17,label=cfb-green
+dtoverlay=gpio-led,gpio=27,label=cfb-amber
+dtoverlay=gpio-led,gpio=22,label=cfb-red
+
+# USB current: 1.6 A total instead of 600 mA. Needed for the 4G modem plus
+# the Iridium modem on USB. Only with a supply that really delivers 5 V / 5 A
+# (X1200 UPS fed by the 27 W USB-C PSU, or an equivalent) - see docs/14.
+usb_max_current_enable=1

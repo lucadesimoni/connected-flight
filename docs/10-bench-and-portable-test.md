@@ -14,7 +14,7 @@ be carried as a portable device (section 5).
 |---|---|---|
 | Raspberry Pi 5 (4 GB) + 27 W USB-C PSU + cooler | – | Raspberry Pi OS **Bookworm 64-bit Lite** |
 | microSD 32 GB (industrial preferred) or NVMe HAT | – | |
-| USB GNSS receiver | u-blox M8/M9/M10 USB (shows up as `/dev/ttyACM0`) | Antenna with sky view |
+| GNSS receiver | u-blox NEO-M9N / MAX-M10S breakout on the UART (GPIO14/15, `/dev/ttyAMA0`, 38400 baud); exact parts in docs/14 | Antenna with sky view. UART, not USB: no USB-ACM driver dependency |
 | USB 4G modem in **QMI/MBIM mode** | Quectel EG25-G / EM06 in a USB adapter, Sierra EM74xx | Avoid "HiLink" sticks (they act as a router; ModemManager can't control the radio). Data SIM, APN known |
 | Ethernet cable | – | SSH over Ethernet: the Wi-Fi radio is switched off until the unit sees "on ground" |
 | Small Linux VPS with a public IPv4 | any provider, Debian 12 | Only UDP 51820 open |
@@ -52,7 +52,7 @@ Record each result (pass/fail, notes, date, software commit).
 | # | Test | Steps | Expected |
 |---|---|---|---|
 | T1 | Build & unit tests on target | `cargo test` on the Pi | All pass |
-| T2 | GNSS input | `cfb-io --gnss /dev/ttyACM0` alone, outdoors | Lines with `nmea=$G?RMC…` and `$G?GGA…` each second; valid fix within ~1 min (cold start may take longer) |
+| T2 | GNSS input | `cfb-verify-hardware`, then `cfb-io --gnss /dev/ttyAMA0` alone, outdoors | Lines with `nmea=$G?RMC…` and `$G?GGA…` each second; valid fix within ~1 min (cold start may take longer) |
 | T3 | Tunnels up | `sudo wg show` | Recent handshake on both `wg-wifi` and `wg-cell` |
 | T4 | Bearer pinning | `ping -I 10.66.1.2 10.66.0.1` and `-I 10.66.2.2`; `sudo tcpdump -ni wlan0 udp port 51820` and `-ni wwan0` | Each ping works; wlan0 carries only the wg-wifi outer traffic, wwan0 only wg-cell |
 | T5 | No leak when a bearer dies | Unplug the 4G modem; `ip route show table 102` | Only `unreachable default`; wg-cell traffic does **not** appear on wlan0/eth0 |

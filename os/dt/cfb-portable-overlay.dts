@@ -1,13 +1,21 @@
 // Copyright (c) 2026 Outthinkx by Luca De Simoni. All rights reserved.
 // Proprietary software, not open source. See LICENSE.
 //
-// Portable CFB on a Raspberry Pi 5: sensors on the header I2C bus.
-//   ISM330DHCX accelerometer/gyro at 0x6a (SA0 low; 0x6b if SA0 high)
-//   BMP390 barometer at 0x77 (SDO high; 0x76 if SDO low)
+// Portable CFB on a Raspberry Pi 5 / CM5: sensors on the header I2C bus.
+//
+//   ISM330DHCX accelerometer/gyro (driver st_lsm6dsx, compatible "st,ism330dhcx")
+//     address 0x6a (Adafruit 4502 default)  |  0x6b (SparkFun Qwiic 6DoF default)
+//   BMP390 barometer (driver bmp280, BMP380 family, chip ID 0x60)
+//     compatible "bosch,bmp380": the kernel has no "bosch,bmp390" string; the
+//     driver identifies the BMP390 by its chip ID. Address 0x77 (Adafruit
+//     4816 default, SDO high) | 0x76 (SDO low).
+//
 // Build:   dtc -@ -I dts -O dtb -o cfb-portable.dtbo os/dt/cfb-portable-overlay.dts
 // Install: cp cfb-portable.dtbo /boot/firmware/overlays/
-// config.txt (see os/dt/config.txt.snippet):  dtparam=i2c_arm=on  +  dtoverlay=cfb-portable
-// Check:   ls /sys/bus/iio/devices/*/name ; cat /sys/bus/iio/devices/*/name
+// Use:     dtparam=i2c_arm=on
+//          dtoverlay=cfb-portable                      (0x6a / 0x77)
+//          dtoverlay=cfb-portable,imu_addr=0x6b        (SparkFun IMU board)
+// Check:   cat /sys/bus/iio/devices/*/name ; scripts/verify-hardware.sh
 /dts-v1/;
 /plugin/;
 
@@ -21,15 +29,20 @@
 			#size-cells = <0>;
 			status = "okay";
 
-			ism330dhcx@6a {
+			cfb_imu: ism330dhcx@6a {
 				compatible = "st,ism330dhcx";
 				reg = <0x6a>;
 			};
 
-			bmp390@77 {
-				compatible = "bosch,bmp390";
+			cfb_baro: bmp390@77 {
+				compatible = "bosch,bmp380";
 				reg = <0x77>;
 			};
 		};
+	};
+
+	__overrides__ {
+		imu_addr = <&cfb_imu>,"reg:0";
+		baro_addr = <&cfb_baro>,"reg:0";
 	};
 };

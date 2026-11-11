@@ -107,6 +107,21 @@ mod tests {
     }
 
     #[test]
+    fn portable_kit_gpio_setting_parses_as_intended() {
+        // Exactly the value in os/systemd/io.env.portable-kit (libgpiod 2.x).
+        let g = parse_gpio_env("rfsw=gpioget --bias=pull-up GPIO23;pfail=gpioget GPIO6");
+        assert_eq!(g, vec![
+            ("rfsw".to_string(), "gpioget --bias=pull-up GPIO23".to_string()),
+            ("pfail".to_string(), "gpioget GPIO6".to_string()),
+        ]);
+        // gpioget 2.x output for the two states, after the configured inversion:
+        // switch ON (pin pulled to GND) -> "inactive" -> rfsw=1 (radios may run);
+        // wire broken (pull-up) -> "active" -> rfsw=0 (OFF, fail-safe).
+        assert_eq!(parse_gpio("\"GPIO23\"=inactive").map(|v| !v), Some(true));
+        assert_eq!(parse_gpio("\"GPIO23\"=active").map(|v| !v), Some(false));
+    }
+
+    #[test]
     fn gpio_overrides_file_with_inversion() {
         let dir = std::env::temp_dir().join(format!("cfb-disc-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

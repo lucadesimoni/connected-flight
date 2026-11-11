@@ -19,6 +19,10 @@ rough orders of magnitude for planning, not quotes.
 
 ## A. Portable unit
 
+> **For building the kit use [docs/14](14-portable-kit-bom.md):** exact,
+> compatibility-checked parts, pin plan and verify script. This section
+> remains the overview.
+
 ### A.1 Components
 
 | Function | Recommended part (example) | Why | Software status |

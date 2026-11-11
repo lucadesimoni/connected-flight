@@ -23,9 +23,18 @@ getent group gpio >/dev/null || groupadd --system gpio
 usermod -aG dialout,gpio cfb
 
 install -m 755 target/release/cfbd target/release/cfb-io target/release/cfb-release target/release/cfb-maint /usr/local/bin/
+install -m 755 scripts/verify-hardware.sh /usr/local/bin/cfb-verify-hardware
 install -d -m 755 /etc/cfb /etc/cfb/apps
 [ -f /etc/cfb/cfb.toml ] || install -m 644 config/cfb-bench-pi5.toml /etc/cfb/cfb.toml
-[ -f /etc/cfb/io.env ] || install -m 644 os/systemd/io.env /etc/cfb/io.env
+# io.env: bench default; portable kit: CFB_KIT=portable sudo -E scripts/install-box.sh
+if [ ! -f /etc/cfb/io.env ]; then
+  if [ "${CFB_KIT:-}" = portable ]; then
+    install -m 644 os/systemd/io.env.portable-kit /etc/cfb/io.env
+    install -m 644 config/cfb-portable-pi5.toml /etc/cfb/cfb.toml
+  else
+    install -m 644 os/systemd/io.env /etc/cfb/io.env
+  fi
+fi
 [ -f /etc/cfb/discretes.default ] || install -m 644 os/systemd/discretes.default /etc/cfb/discretes.default
 [ -f /etc/cfb/maint.env ] || install -m 644 os/systemd/maint.env /etc/cfb/maint.env
 if [ ! -f /etc/cfb/maint.token ]; then

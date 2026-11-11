@@ -71,4 +71,5 @@ local_conf_header:
     ENABLE_I2C = "1"
     IMAGE_BOOT_FILES:append = " cfb-portable.dtbo;overlays/cfb-portable.dtbo"
     do_image_wic[depends] += "cfb-dtoverlay:do_deploy"
-    RPI_EXTRA_CONFIG = "\ndtoverlay=cfb-portable\ndtoverlay=gpio-led,gpio=5,label=cfb-green\ndtoverlay=gpio-led,gpio=6,label=cfb-amber\ndtoverlay=gpio-led,gpio=13,label=cfb-red\n"
+    # Same pin plan as os/dt/config.txt.snippet (GPIO6/16 belong to the X1200 UPS).
+    RPI_EXTRA_CONFIG = "\ndtparam=uart0\ndtoverlay=cfb-portable\ndtoverlay=gpio-led,gpio=17,label=cfb-green\ndtoverlay=gpio-led,gpio=27,label=cfb-amber\ndtoverlay=gpio-led,gpio=22,label=cfb-red\nusb_max_current_enable=1\n"
